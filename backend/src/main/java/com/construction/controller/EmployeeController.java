@@ -170,6 +170,16 @@ public class EmployeeController {
         return ResponseEntity.status(HttpStatus.CREATED).body(employeeService.generateDailyQrCode(createdBy));
     }
 
+    @DeleteMapping("/attendance/qr/today")
+    public ResponseEntity<Map<String, Object>> deleteTodayQrCode() {
+        return ResponseEntity.ok(employeeService.deleteTodayQrCode());
+    }
+
+    @DeleteMapping("/attendance/qr/{id}")
+    public ResponseEntity<Map<String, Object>> deleteQrCodeById(@PathVariable Long id) {
+        return ResponseEntity.ok(employeeService.deleteQrCodeById(id));
+    }
+
     @PostMapping("/attendance/qr/scan")
     public ResponseEntity<Map<String, Object>> scanQrCode(@RequestBody Map<String, Object> payload) {
         String token = payload != null && payload.get("token") != null ? String.valueOf(payload.get("token")) : null;

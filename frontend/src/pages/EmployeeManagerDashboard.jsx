@@ -6,6 +6,7 @@ import {
   assignEmployeeRole,
   deleteAttendanceRecord,
   deleteEmployeeById,
+  deleteTodayAttendanceQr,
   formatDate,
   generateDailyAttendanceQr,
   getAllEmployees,
@@ -149,6 +150,34 @@ export default function EmployeeManagerDashboard() {
       refreshData();
     } catch (err) {
       setQrError(err.message || 'Failed to generate daily QR code.');
+      fail(err);
+    } finally {
+      setLoadingQr(false);
+    }
+  };
+
+  const handleDeleteDailyQr = async () => {
+    const confirmDelete = window.confirm(
+      "Are you sure you want to delete today's daily attendance QR code? Workers will not be able to scan until a fresh QR code is generated."
+    );
+    if (!confirmDelete) return;
+
+    try {
+      setLoadingQr(true);
+      setQrError('');
+      await deleteTodayAttendanceQr();
+      setTodayQr({
+        hasActiveQr: false,
+        status: 'NOT_GENERATED',
+        message: 'No active QR code generated for today yet.',
+      });
+      setQrSecondsLeft(0);
+      setQrNotice("Today's daily attendance QR code has been deleted successfully.");
+      report("Today's daily attendance QR code has been deleted successfully.");
+      setTimeout(() => setQrNotice(''), 6000);
+      refreshData();
+    } catch (err) {
+      setQrError(err.message || 'Failed to delete daily QR code.');
       fail(err);
     } finally {
       setLoadingQr(false);
@@ -2107,6 +2136,28 @@ export default function EmployeeManagerDashboard() {
                           >
                             {loadingQr ? 'Generating...' : 'Regenerate'}
                           </button>
+                          <button
+                            type="button"
+                            onClick={handleDeleteDailyQr}
+                            disabled={loadingQr}
+                            title="Delete today's active QR code"
+                            style={{
+                              padding: '8px 14px',
+                              background: '#fee2e2',
+                              color: '#b91c1c',
+                              border: '1px solid #fca5a5',
+                              borderRadius: '8px',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                              cursor: loadingQr ? 'not-allowed' : 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '0.95rem' }}>delete</span>
+                            Delete QR
+                          </button>
                         </>
                       ) : (
                         <button
@@ -2652,25 +2703,51 @@ export default function EmployeeManagerDashboard() {
                     </button>
 
                     {todayQr?.hasActiveQr && (
-                      <button
-                        type="button"
-                        onClick={() => setShowQrPrintModal(true)}
-                        style={{
-                          padding: '12px 20px',
-                          background: 'rgba(255, 255, 255, 0.15)',
-                          color: '#ffffff',
-                          border: '1px solid rgba(255, 255, 255, 0.3)',
-                          borderRadius: '10px',
-                          fontWeight: 700,
-                          fontSize: '0.92rem',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                        }}
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: '1.2rem' }}>print</span> Print Poster (A4)
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setShowQrPrintModal(true)}
+                          style={{
+                            padding: '12px 20px',
+                            background: 'rgba(255, 255, 255, 0.15)',
+                            color: '#ffffff',
+                            border: '1px solid rgba(255, 255, 255, 0.3)',
+                            borderRadius: '10px',
+                            fontWeight: 700,
+                            fontSize: '0.92rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '1.2rem' }}>print</span> Print Poster (A4)
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleDeleteDailyQr}
+                          disabled={loadingQr}
+                          title="Delete today's active QR code"
+                          style={{
+                            padding: '12px 20px',
+                            background: 'rgba(239, 68, 68, 0.25)',
+                            color: '#ffffff',
+                            border: '1px solid rgba(254, 202, 202, 0.6)',
+                            borderRadius: '10px',
+                            fontWeight: 700,
+                            fontSize: '0.92rem',
+                            cursor: loadingQr ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            transition: 'all 0.2s',
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '1.2rem' }}>delete</span>
+                          Delete QR
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -2868,6 +2945,28 @@ export default function EmployeeManagerDashboard() {
                             }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>print</span> Print Poster
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleDeleteDailyQr}
+                            disabled={loadingQr}
+                            title="Delete today's active QR code"
+                            style={{
+                              padding: '9px 12px',
+                              background: '#fee2e2',
+                              color: '#b91c1c',
+                              border: '1px solid #fca5a5',
+                              borderRadius: '8px',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                              cursor: loadingQr ? 'not-allowed' : 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '4px',
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>delete</span> Delete QR
                           </button>
                         </div>
                       </div>

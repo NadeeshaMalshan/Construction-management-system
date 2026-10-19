@@ -337,6 +337,12 @@ export const scanAttendanceQr = (payload) => request('/api/employees/attendance/
   method: 'POST',
   body: payload,
 });
+export const deleteTodayAttendanceQr = () => request('/api/employees/attendance/qr/today', {
+  method: 'DELETE',
+});
+export const deleteAttendanceQrById = (id) => request(`/api/employees/attendance/qr/${id}`, {
+  method: 'DELETE',
+});
 
 // Employee Portal (Step 6)
 export const getMyAssignedProjects = (username) => request(`/api/employees/my-projects${username ? `?username=${encodeURIComponent(username)}` : ''}`);

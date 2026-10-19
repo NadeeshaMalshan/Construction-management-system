@@ -750,6 +750,39 @@ public class EmployeeService {
         return res;
     }
 
+    public Map<String, Object> deleteTodayQrCode() {
+        ZoneId zoneId = ZoneId.of("Asia/Kolkata");
+        LocalDate today = LocalDate.now(zoneId);
+
+        List<AttendanceQrCode> todayList = attendanceQrCodeRepository.findByDateOrderByCreatedAtDesc(today);
+        if (todayList.isEmpty()) {
+            Map<String, Object> res = new HashMap<>();
+            res.put("hasActiveQr", false);
+            res.put("status", "NOT_GENERATED");
+            res.put("message", "No active QR code found to delete for today.");
+            return res;
+        }
+
+        attendanceQrCodeRepository.deleteAll(todayList);
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("hasActiveQr", false);
+        res.put("status", "NOT_GENERATED");
+        res.put("message", "Today's daily attendance QR code deleted successfully.");
+        return res;
+    }
+
+    public Map<String, Object> deleteQrCodeById(Long id) {
+        if (id != null && attendanceQrCodeRepository.existsById(id)) {
+            attendanceQrCodeRepository.deleteById(id);
+        }
+        Map<String, Object> res = new HashMap<>();
+        res.put("hasActiveQr", false);
+        res.put("status", "NOT_GENERATED");
+        res.put("message", "Attendance QR code deleted successfully.");
+        return res;
+    }
+
     public Map<String, Object> scanQrCode(String token, Long employeeId, String username) {
         if (token == null || token.isBlank()) {
             throw new BadRequestException("QR code token is required.");
