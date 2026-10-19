@@ -30,7 +30,14 @@ import {
   updateSupplier,
   deleteSupplier,
 } from '../services/api';
-import { downloadFile, exportCsv, exportExcel, downloadPurchaseOrderInvoice } from '../utils/documentDownload';
+import {
+  downloadFile,
+  exportCsv,
+  exportExcel,
+  downloadPurchaseOrderInvoice,
+  downloadMaterialInventoryReportPdf,
+  downloadMasterInventoryAnalyticsPdf,
+} from '../utils/documentDownload';
 
 const localDateString = (value = new Date()) => {
   const date = value instanceof Date ? value : new Date(value);
@@ -162,6 +169,52 @@ export default function InventoryManagerDashboard() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Executive Analytics Computed Values
+  const totalStockValuation = useMemo(() => {
+    return materials.reduce((acc, m) => acc + Number((m.quantity || 0) * (m.unitPrice || 0)), 0);
+  }, [materials]);
+
+  const lowStockMaterialsCount = useMemo(() => {
+    return materials.filter((m) => m.quantity <= m.minStockLevel && m.quantity > 0).length;
+  }, [materials]);
+
+  const outOfStockMaterialsCount = useMemo(() => {
+    return materials.filter((m) => m.quantity <= 0).length;
+  }, [materials]);
+
+  const healthyStockCount = useMemo(() => {
+    return materials.filter((m) => m.quantity > m.minStockLevel).length;
+  }, [materials]);
+
+  const totalProcurementSpend = useMemo(() => {
+    return purchaseOrders.reduce((acc, p) => acc + Number(p.totalAmount || (p.quantity * p.unitPrice) || 0), 0);
+  }, [purchaseOrders]);
+
+  const fulfilledRequestsCount = useMemo(() => {
+    return requests.filter((r) => r.status === 'APPROVED' || r.status === 'ISSUED').length;
+  }, [requests]);
+
+  const requisitionFulfillmentRate = useMemo(() => {
+    if (requests.length === 0) return 100;
+    return Math.round((fulfilledRequestsCount / requests.length) * 100);
+  }, [requests.length, fulfilledRequestsCount]);
+
+  const categoryAnalytics = useMemo(() => {
+    const map = {};
+    materials.forEach((m) => {
+      const cat = m.category || 'General Building';
+      if (!map[cat]) map[cat] = { count: 0, value: 0 };
+      map[cat].count += 1;
+      map[cat].value += Number((m.quantity || 0) * (m.unitPrice || 0));
+    });
+    return Object.entries(map).map(([name, data]) => ({
+      name,
+      count: data.count,
+      value: data.value,
+      pct: totalStockValuation > 0 ? ((data.value / totalStockValuation) * 100).toFixed(1) : 0,
+    })).sort((a, b) => b.value - a.value);
+  }, [materials, totalStockValuation]);
+
   const refreshData = async () => {
     try {
       setLoading(true);
@@ -248,12 +301,18 @@ export default function InventoryManagerDashboard() {
 
   const saveMaterialSubmit = async (e) => {
     e.preventDefault();
+    const qty = Number(materialForm.quantity || 0);
+    const minStock = Number(materialForm.minStockLevel || 0);
+    if (qty <= minStock) {
+      fail(new Error(`Validation Failed: Available quantity (${qty}) must be strictly greater than the minimum stock level (${minStock}). Please increase the available quantity.`));
+      return;
+    }
     try {
       const payload = {
         ...materialForm,
-        quantity: Number(materialForm.quantity || 0),
+        quantity: qty,
         unitPrice: Number(materialForm.unitPrice || 0),
-        minStockLevel: Number(materialForm.minStockLevel || 0),
+        minStockLevel: minStock,
       };
 
       if (editingMaterial) {
@@ -387,6 +446,10 @@ export default function InventoryManagerDashboard() {
 
   const submitPurchaseOrder = async (e) => {
     e.preventDefault();
+    if (poForm.expectedDeliveryDate && poForm.expectedDeliveryDate < today) {
+      report('Expected delivery date cannot be before today.');
+      return;
+    }
     try {
       await createPurchaseOrder({
         material: { id: Number(poForm.materialId) },
@@ -793,6 +856,220 @@ export default function InventoryManagerDashboard() {
     window.print();
   };
 
+  const handleExportReportToExcel = () => {
+    let rows = [];
+    if (reportType === 'inventory_stock') {
+      rows = filteredReportMaterials.map((m) => ({
+        'Material Code': m.materialCode || '',
+        'Material Name': m.name || '',
+        'Category': m.category || '',
+        'Quantity': m.quantity || 0,
+        'Unit': m.unit || '',
+        'Unit Price (LKR)': m.unitPrice || 0,
+        'Total Value (LKR)': Number((m.quantity || 0) * (m.unitPrice || 0)).toFixed(2),
+        'Min Stock Level': m.minStockLevel || 0,
+        'Status': m.quantity <= 0 ? 'OUT OF STOCK' : m.quantity <= m.minStockLevel ? 'LOW STOCK' : 'IN STOCK',
+        'Location': m.location || '',
+        'Supplier': m.supplier || '',
+      }));
+    } else if (reportType === 'consumption') {
+      if (consumptionData?.breakdown) {
+        rows = consumptionData.breakdown.map((item) => ({
+          'Project': consumptionData.projectName || 'Project',
+          'Material Name': item.materialName || '',
+          'Consumed Qty': item.consumedQuantity || 0,
+          'Unit': item.unit || '',
+          'Total Cost (LKR)': Number(item.totalCost || 0).toFixed(2),
+          'Transactions': item.transactionCount || 0,
+        }));
+      }
+    } else if (reportType === 'requests') {
+      rows = filteredReportRequests.map((r) => ({
+        'Request Code': r.requestCode || `#REQ-${r.id}`,
+        'Date': formatDate(r.requestDate || r.createdAt),
+        'Project': r.project?.name || '',
+        'Material': r.material?.name || '',
+        'Requested Qty': r.requestedQuantity || r.quantity || 0,
+        'Issued Qty': r.issuedQuantity || 0,
+        'Unit': r.material?.unit || '',
+        'Status': r.status || '',
+        'Requested By': r.requestedBy || '',
+        'Remarks': r.remarks || '',
+      }));
+    } else if (reportType === 'purchase_orders') {
+      rows = filteredReportPOs.map((p) => ({
+        'PO Number': p.poNumber || '',
+        'Order Date': formatDate(p.orderDate || p.createdAt),
+        'Supplier': p.supplier || '',
+        'Material': p.material?.name || '',
+        'Quantity': p.quantity || 0,
+        'Unit Price (LKR)': p.unitPrice || 0,
+        'Total Cost (LKR)': Number(p.totalAmount || (p.quantity * p.unitPrice) || 0).toFixed(2),
+        'Status': p.status || '',
+        'Expected Delivery': formatDate(p.expectedDeliveryDate) || '',
+      }));
+    } else if (reportType === 'site_alerts') {
+      rows = filteredReportAlerts.map((a) => ({
+        'Date': formatDate(a.createdAt),
+        'Material': a.material?.name || '',
+        'Site Location': a.siteLocation || '',
+        'Urgency': a.urgency || '',
+        'Site Stock': a.currentSiteStock ?? '',
+        'Replenishment Qty': a.requestedQuantity ?? '',
+        'Status': a.status || '',
+        'Reported By': a.reportedBy || '',
+      }));
+    }
+
+    exportExcel(
+      `Odiliya_${reportType}_report_${today}`,
+      rows,
+      null,
+      'Report'
+    );
+    report(`Excel report for ${reportType} generated.`);
+  };
+
+  const handleDownloadPdfReport = () => {
+    let reportTitle = 'Material & Inventory Report';
+    let subtitle = '';
+    let stats = [];
+    let headers = [];
+    let rows = [];
+
+    if (reportType === 'inventory_stock') {
+      reportTitle = 'Warehouse Stock Valuation & Inventory Catalog Audit';
+      subtitle = `Category: ${reportCategory} | Status: ${reportStatus} | Filtered Count: ${filteredReportMaterials.length} SKUs`;
+      const totalVal = filteredReportMaterials.reduce((acc, m) => acc + Number((m.quantity || 0) * (m.unitPrice || 0)), 0);
+      const lowCount = filteredReportMaterials.filter((m) => m.quantity <= m.minStockLevel).length;
+      stats = [
+        { label: 'FILTERED SKUs', value: `${filteredReportMaterials.length}` },
+        { label: 'TOTAL STOCK VALUE', value: `${formatMoney(totalVal)}` },
+        { label: 'LOW / DEPLETED', value: `${lowCount}` },
+      ];
+      headers = ['Code', 'Material Name', 'Category', 'Stock Qty', 'Unit Price', 'Total Value', 'Safety Min', 'Status', 'Location'];
+      rows = filteredReportMaterials.map((m) => {
+        const val = Number((m.quantity || 0) * (m.unitPrice || 0));
+        const statusStr = m.quantity <= 0 ? 'OUT OF STOCK' : m.quantity <= m.minStockLevel ? 'LOW STOCK' : 'IN STOCK';
+        return [
+          m.materialCode || '—',
+          m.name || '—',
+          m.category || '—',
+          `${m.quantity || 0} ${m.unit || ''}`,
+          formatMoney(m.unitPrice || 0),
+          formatMoney(val),
+          `${m.minStockLevel || 0} ${m.unit || ''}`,
+          statusStr,
+          m.location || 'Warehouse Depot',
+        ];
+      });
+    } else if (reportType === 'consumption') {
+      reportTitle = `Project Material Consumption Audit — ${consumptionData?.projectName || 'Project'}`;
+      subtitle = `Total Cost: ${formatMoney(consumptionData?.totalMaterialCost || 0)} | Units Consumed: ${consumptionData?.totalQuantityConsumed || 0}`;
+      stats = [
+        { label: 'PROJECT', value: `${consumptionData?.projectName || 'Project'}` },
+        { label: 'TOTAL MATERIAL COST', value: `${formatMoney(consumptionData?.totalMaterialCost || 0)}` },
+        { label: 'TOTAL UNITS ISSUED', value: `${consumptionData?.totalQuantityConsumed || 0}` },
+      ];
+      headers = ['Material Description', 'Quantity Consumed', 'Unit', 'Total Expenditure', 'Logged Transactions'];
+      if (consumptionData?.breakdown) {
+        rows = consumptionData.breakdown.map((item) => [
+          item.materialName || '—',
+          item.consumedQuantity || 0,
+          item.unit || '',
+          formatMoney(item.totalCost || 0),
+          `${item.transactionCount || 1} issuance(s)`,
+        ]);
+      }
+    } else if (reportType === 'requests') {
+      reportTitle = 'Material Requisitions & Approvals Audit';
+      subtitle = `Total Filtered Requisitions: ${filteredReportRequests.length}`;
+      const approvedCount = filteredReportRequests.filter((r) => r.status === 'APPROVED' || r.status === 'ISSUED').length;
+      stats = [
+        { label: 'TOTAL REQUESTS', value: `${filteredReportRequests.length}` },
+        { label: 'APPROVED / ISSUED', value: `${approvedCount}` },
+        { label: 'PENDING APPROVAL', value: `${filteredReportRequests.filter((r) => r.status === 'PENDING').length}` },
+      ];
+      headers = ['Request Code', 'Date', 'Project Site', 'Material', 'Requested Qty', 'Issued Qty', 'Requested By', 'Status', 'Remarks'];
+      rows = filteredReportRequests.map((r) => [
+        r.requestCode || `#REQ-${r.id}`,
+        formatDate(r.requestDate || r.createdAt),
+        r.project?.name || 'Site',
+        r.material?.name || '—',
+        `${r.requestedQuantity || r.quantity || 0} ${r.material?.unit || ''}`,
+        `${r.issuedQuantity || 0} ${r.material?.unit || ''}`,
+        r.requestedBy || 'Site Lead',
+        r.status || 'PENDING',
+        r.remarks || '—',
+      ]);
+    } else if (reportType === 'purchase_orders') {
+      reportTitle = 'Procurement Purchase Orders (PO) Audit Register';
+      subtitle = `Total Purchase Orders: ${filteredReportPOs.length}`;
+      const totalPoSpend = filteredReportPOs.reduce((acc, p) => acc + Number(p.totalAmount || (p.quantity * p.unitPrice) || 0), 0);
+      stats = [
+        { label: 'TOTAL POs', value: `${filteredReportPOs.length}` },
+        { label: 'PROCUREMENT SPEND', value: `${formatMoney(totalPoSpend)}` },
+        { label: 'RECEIVED & STOCKED', value: `${filteredReportPOs.filter((p) => p.status === 'RECEIVED').length}` },
+      ];
+      headers = ['PO Number', 'Order Date', 'Supplier Vendor', 'Material Item', 'Quantity', 'Unit Price', 'Total Cost', 'Status', 'Delivery Date'];
+      rows = filteredReportPOs.map((p) => {
+        const total = Number(p.totalAmount || (p.quantity * p.unitPrice) || 0);
+        return [
+          p.poNumber || `#PO-${p.id}`,
+          formatDate(p.orderDate || p.createdAt),
+          p.supplier || '—',
+          p.material?.name || '—',
+          `${p.quantity} ${p.material?.unit || ''}`,
+          formatMoney(p.unitPrice || 0),
+          formatMoney(total),
+          p.status || 'ORDERED',
+          formatDate(p.expectedDeliveryDate) || '—',
+        ];
+      });
+    } else if (reportType === 'site_alerts') {
+      reportTitle = 'Site Manager Stock Shortage Alerts History';
+      subtitle = `Total Alerts Recorded: ${filteredReportAlerts.length}`;
+      stats = [
+        { label: 'TOTAL ALERTS', value: `${filteredReportAlerts.length}` },
+        { label: 'PENDING ACTION', value: `${filteredReportAlerts.filter((a) => a.status === 'PENDING').length}` },
+        { label: 'RESOLVED', value: `${filteredReportAlerts.filter((a) => a.status === 'RESOLVED').length}` },
+      ];
+      headers = ['Date Logged', 'Material', 'Site Location', 'Urgency', 'Site Stock', 'Requested Qty', 'Status', 'Reported By'];
+      rows = filteredReportAlerts.map((a) => [
+        formatDate(a.createdAt),
+        a.material?.name || '—',
+        a.siteLocation || 'Site',
+        a.urgency || 'MEDIUM',
+        a.currentSiteStock !== null ? `${a.currentSiteStock} ${a.material?.unit || ''}` : 'Low',
+        a.requestedQuantity ? `${a.requestedQuantity} ${a.material?.unit || ''}` : '—',
+        a.status || 'PENDING',
+        a.reportedBy || 'Site Lead',
+      ]);
+    }
+
+    downloadMaterialInventoryReportPdf({
+      reportType,
+      reportTitle,
+      subtitle,
+      stats,
+      headers,
+      rows,
+    });
+    report(`Official ${reportTitle} PDF downloaded successfully.`);
+  };
+
+  const handleDownloadMasterDossierPdf = () => {
+    downloadMasterInventoryAnalyticsPdf({
+      materials,
+      categories,
+      purchaseOrders,
+      requests,
+      stockAlerts,
+      suppliers,
+    });
+    report('Master Inventory & Procurement Analytics Dossier PDF downloaded successfully.');
+  };
+
   return (
     <div className="light-site-wrapper">
       <Navbar />
@@ -873,10 +1150,9 @@ export default function InventoryManagerDashboard() {
             onClick={() => setTab('reports')}
             className={tab === 'reports' ? 'active' : ''}
             style={{
-              background: tab === 'reports' ? '#047857' : '#ecfdf5',
-              color: tab === 'reports' ? '#ffffff' : '#047857',
-              fontWeight: 700,
-              border: '1px solid #a7f3d0',
+              background: tab === 'reports' ? '#0f766e' : '',
+              color: tab === 'reports' ? '#ffffff' : '',
+              fontWeight: 600,
             }}
           >
             Reports &amp; Analytics
@@ -974,27 +1250,33 @@ export default function InventoryManagerDashboard() {
                   </button>
                   <button
                     onClick={openAddSupplierModal}
-                    style={{ padding: '12px 16px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
+                    style={{ padding: '12px 16px', background: '#047857', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
                   >
                     + Register new supplier
                   </button>
                   <button
                     onClick={() => setTab('suppliers')}
-                    style={{ padding: '12px 16px', background: '#f3f4f6', color: '#111827', border: '1px solid #d1d5db', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
+                    style={{ padding: '12px 16px', background: '#047857', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
                   >
                     Manage suppliers &amp; order goods
                   </button>
                   <button
                     onClick={() => setTab('requests')}
-                    style={{ padding: '12px 16px', background: '#f3f4f6', color: '#111827', border: '1px solid #d1d5db', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
+                    style={{ padding: '12px 16px', background: '#047857', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
                   >
                     Review material requests
                   </button>
                   <button
                     onClick={() => setTab('purchase_orders')}
-                    style={{ padding: '12px 16px', background: '#f3f4f6', color: '#111827', border: '1px solid #d1d5db', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
+                    style={{ padding: '12px 16px', background: '#047857', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
                   >
                     Create purchase order
+                  </button>
+                  <button
+                    onClick={() => setTab('reports')}
+                    style={{ padding: '12px 16px', background: '#0f766e', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
+                  >
+                    📊 View Reports &amp; Analytics
                   </button>
                 </div>
               </div>
@@ -1235,8 +1517,21 @@ export default function InventoryManagerDashboard() {
                   onChange={(e) => setMaterialForm({ ...materialForm, quantity: e.target.value })}
                   placeholder="e.g. 500"
                   required
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #d1d5db', boxSizing: 'border-box' }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: materialForm.quantity !== '' && materialForm.minStockLevel !== '' && Number(materialForm.quantity) <= Number(materialForm.minStockLevel)
+                      ? '2px solid #ef4444'
+                      : '1px solid #d1d5db',
+                    boxSizing: 'border-box'
+                  }}
                 />
+                {materialForm.quantity !== '' && materialForm.minStockLevel !== '' && Number(materialForm.quantity) <= Number(materialForm.minStockLevel) && (
+                  <small style={{ color: '#dc2626', fontWeight: 700, display: 'block', marginTop: '6px', fontSize: '0.8rem' }}>
+                    Available quantity must be greater than Minimum Stock Level ({materialForm.minStockLevel})
+                  </small>
+                )}
               </div>
 
               <div style={{ gridColumn: 'span 1' }}>
@@ -1251,8 +1546,21 @@ export default function InventoryManagerDashboard() {
                   onChange={(e) => setMaterialForm({ ...materialForm, minStockLevel: e.target.value })}
                   placeholder="e.g. 100"
                   required
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #d1d5db', boxSizing: 'border-box' }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: materialForm.quantity !== '' && materialForm.minStockLevel !== '' && Number(materialForm.quantity) <= Number(materialForm.minStockLevel)
+                      ? '2px solid #ef4444'
+                      : '1px solid #d1d5db',
+                    boxSizing: 'border-box'
+                  }}
                 />
+                {materialForm.quantity !== '' && materialForm.minStockLevel !== '' && Number(materialForm.quantity) <= Number(materialForm.minStockLevel) && (
+                  <small style={{ color: '#dc2626', fontWeight: 600, display: 'block', marginTop: '6px', fontSize: '0.78rem' }}>
+                    Alert threshold must be strictly less than Available Quantity ({materialForm.quantity})
+                  </small>
+                )}
               </div>
 
               <div style={{ gridColumn: 'span 1' }}>
@@ -2058,7 +2366,7 @@ export default function InventoryManagerDashboard() {
                                       cursor: 'pointer',
                                     }}
                                   >
-                                    📦 {good} {matchedMat ? `(Stock: ${matchedMat.quantity})` : ''}
+                                    {good} {matchedMat ? `(Stock: ${matchedMat.quantity})` : ''}
                                   </button>
                                 );
                               })}
@@ -2112,7 +2420,14 @@ export default function InventoryManagerDashboard() {
                     type="date"
                     min={today}
                     value={poForm.expectedDeliveryDate}
-                    onChange={(e) => setPoForm({ ...poForm, expectedDeliveryDate: e.target.value })}
+                    onChange={(e) => {
+                      const selected = e.target.value;
+                      if (selected && selected < today) {
+                        report('Expected delivery date cannot be before today.');
+                        return;
+                      }
+                      setPoForm({ ...poForm, expectedDeliveryDate: selected });
+                    }}
                     style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #d1d5db' }}
                   />
                 </div>
@@ -2268,7 +2583,7 @@ export default function InventoryManagerDashboard() {
                             }}
                             title="Download official goods procurement purchase PDF invoice"
                           >
-                            📄 Download PDF Invoice
+                            Download PDF Invoice
                           </button>
                         </div>
                       </div>
@@ -2406,9 +2721,182 @@ export default function InventoryManagerDashboard() {
           </div>
         )}
 
-        {/* TAB 8: DOCUMENTS & INVENTORY ANALYTICS */}
+        {/* TAB 8: REPORTS & INVENTORY ANALYTICS */}
         {tab === 'reports' && (
           <div>
+            {/* EXECUTIVE MATERIAL & INVENTORY ANALYTICS OVERVIEW */}
+            <div style={{ background: '#ffffff', borderRadius: '12px', padding: '24px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
+                <div>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0f766e', background: '#f0fdfa', padding: '3px 8px', borderRadius: '4px', textTransform: 'uppercase' }}>
+                    EXECUTIVE AUDIT &amp; INTELLIGENCE
+                  </span>
+                  <h2 style={{ margin: '6px 0 4px', color: '#111827', fontSize: '1.4rem', fontWeight: 800 }}>
+                    Material &amp; Inventory Analytics Dashboard
+                  </h2>
+                  <p style={{ margin: 0, color: '#6b7280', fontSize: '0.88rem' }}>
+                    Real-time valuation metrics, stock distribution by category, replenishment rates, and official PDF audit dossier exports.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={handleDownloadMasterDossierPdf}
+                    style={{
+                      padding: '10px 18px',
+                      background: '#d97706',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontSize: '0.88rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      boxShadow: '0 2px 4px rgba(217, 119, 6, 0.2)',
+                    }}
+                  >
+                    <span>📑</span> Download Full Executive Dossier (PDF)
+                  </button>
+                </div>
+              </div>
+
+              {/* KPI Cards Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '24px' }}>
+                <div style={{ background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '10px', padding: '16px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase' }}>TOTAL STOCK VALUATION</span>
+                  <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#166534', marginTop: '4px' }}>
+                    {formatMoney(totalStockValuation)}
+                  </div>
+                  <span style={{ fontSize: '0.74rem', color: '#15803d' }}>Across {materials.length} catalog items</span>
+                </div>
+
+                <div style={{ background: '#f8fafc', border: '1.5px solid #cbd5e1', borderRadius: '10px', padding: '16px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', textTransform: 'uppercase' }}>CATALOG MATERIAL SKUs</span>
+                  <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#0f172a', marginTop: '4px' }}>
+                    {materials.length} SKUs
+                  </div>
+                  <span style={{ fontSize: '0.74rem', color: '#64748b' }}>Active Warehouse Storage</span>
+                </div>
+
+                <div style={{ background: (lowStockMaterialsCount + outOfStockMaterialsCount) > 0 ? '#fff1f2' : '#f0fdf4', border: (lowStockMaterialsCount + outOfStockMaterialsCount) > 0 ? '1.5px solid #fecdd3' : '1.5px solid #bbf7d0', borderRadius: '10px', padding: '16px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: (lowStockMaterialsCount + outOfStockMaterialsCount) > 0 ? '#9f1239' : '#166534', textTransform: 'uppercase' }}>LOW STOCK WARNINGS</span>
+                  <div style={{ fontSize: '1.45rem', fontWeight: 800, color: (lowStockMaterialsCount + outOfStockMaterialsCount) > 0 ? '#9f1239' : '#166534', marginTop: '4px' }}>
+                    {lowStockMaterialsCount + outOfStockMaterialsCount} Items
+                  </div>
+                  <span style={{ fontSize: '0.74rem', color: (lowStockMaterialsCount + outOfStockMaterialsCount) > 0 ? '#e11d48' : '#15803d' }}>
+                    {outOfStockMaterialsCount} Out of stock • {lowStockMaterialsCount} Below safety min
+                  </span>
+                </div>
+
+                <div style={{ background: '#eff6ff', border: '1.5px solid #bfdbfe', borderRadius: '10px', padding: '16px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1e40af', textTransform: 'uppercase' }}>PROCUREMENT ORDERS</span>
+                  <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#1e40af', marginTop: '4px' }}>
+                    {formatMoney(totalProcurementSpend)}
+                  </div>
+                  <span style={{ fontSize: '0.74rem', color: '#2563eb' }}>{purchaseOrders.length} Purchase Orders</span>
+                </div>
+
+                <div style={{ background: '#faf5ff', border: '1.5px solid #e9d5ff', borderRadius: '10px', padding: '16px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6b21a8', textTransform: 'uppercase' }}>REQUISITION FULFILLMENT</span>
+                  <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#6b21a8', marginTop: '4px' }}>
+                    {requisitionFulfillmentRate}%
+                  </div>
+                  <span style={{ fontSize: '0.74rem', color: '#7c3aed' }}>{fulfilledRequestsCount} of {requests.length} Requests Handled</span>
+                </div>
+
+                <div style={{ background: '#ecfdf5', border: '1.5px solid #a7f3d0', borderRadius: '10px', padding: '16px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#065f46', textTransform: 'uppercase' }}>APPROVED SUPPLIERS</span>
+                  <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#065f46', marginTop: '4px' }}>
+                    {suppliers.length} Vendors
+                  </div>
+                  <span style={{ fontSize: '0.74rem', color: '#047857' }}>Active Supply Partnerships</span>
+                </div>
+              </div>
+
+              {/* Visual Category Breakdown & Stock Health Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+                {/* Category Allocation Visual Bars */}
+                <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>
+                      Material Category Asset Allocation
+                    </h4>
+                    <span style={{ fontSize: '0.78rem', color: '#64748b' }}>{categoryAnalytics.length} categories</span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {categoryAnalytics.slice(0, 5).map((cat) => (
+                      <div key={cat.name}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
+                          <span>{cat.name} ({cat.count} items)</span>
+                          <span style={{ color: '#047857' }}>{formatMoney(cat.value)} ({cat.pct}%)</span>
+                        </div>
+                        <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.min(100, Math.max(3, cat.pct))}%`, height: '100%', background: '#047857', borderRadius: '4px' }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Stock Health Visual Distribution */}
+                <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>
+                      Warehouse Stock Health &amp; Inventory Status
+                    </h4>
+                    <span style={{ fontSize: '0.78rem', color: '#64748b' }}>{materials.length} total items</span>
+                  </div>
+
+                  {/* Multi-segment Progress Bar */}
+                  <div style={{ width: '100%', height: '14px', background: '#e2e8f0', borderRadius: '7px', display: 'flex', overflow: 'hidden', marginBottom: '16px' }}>
+                    <div
+                      style={{
+                        width: `${materials.length > 0 ? (healthyStockCount / materials.length) * 100 : 0}%`,
+                        background: '#10b981',
+                        transition: 'width 0.3s',
+                      }}
+                      title={`Healthy In Stock: ${healthyStockCount}`}
+                    />
+                    <div
+                      style={{
+                        width: `${materials.length > 0 ? (lowStockMaterialsCount / materials.length) * 100 : 0}%`,
+                        background: '#f59e0b',
+                        transition: 'width 0.3s',
+                      }}
+                      title={`Low Stock: ${lowStockMaterialsCount}`}
+                    />
+                    <div
+                      style={{
+                        width: `${materials.length > 0 ? (outOfStockMaterialsCount / materials.length) * 100 : 0}%`,
+                        background: '#ef4444',
+                        transition: 'width 0.3s',
+                      }}
+                      title={`Out of Stock: ${outOfStockMaterialsCount}`}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#ecfdf5', borderRadius: '6px', fontSize: '0.82rem' }}>
+                      <span style={{ color: '#065f46', fontWeight: 600 }}>🟢 Healthy In-Stock</span>
+                      <strong style={{ color: '#065f46' }}>{healthyStockCount} items ({materials.length > 0 ? Math.round((healthyStockCount / materials.length) * 100) : 0}%)</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#fffbeb', borderRadius: '6px', fontSize: '0.82rem' }}>
+                      <span style={{ color: '#92400e', fontWeight: 600 }}>🟡 Low Stock Warning</span>
+                      <strong style={{ color: '#92400e' }}>{lowStockMaterialsCount} items ({materials.length > 0 ? Math.round((lowStockMaterialsCount / materials.length) * 100) : 0}%)</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#fef2f2', borderRadius: '6px', fontSize: '0.82rem' }}>
+                      <span style={{ color: '#991b1b', fontWeight: 600 }}>🔴 Depleted / Out of Stock</span>
+                      <strong style={{ color: '#991b1b' }}>{outOfStockMaterialsCount} items ({materials.length > 0 ? Math.round((outOfStockMaterialsCount / materials.length) * 100) : 0}%)</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Documents & Compliance Downloads Banner */}
             <div style={{ background: '#ffffff', borderRadius: '12px', padding: '24px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
@@ -2516,7 +3004,7 @@ export default function InventoryManagerDashboard() {
                     boxShadow: selectedInvoicePoId ? '0 2px 4px rgba(4,120,87,0.2)' : 'none',
                   }}
                 >
-                  📄 Download Selected PDF Invoice
+                  Download Selected PDF Invoice
                 </button>
               </div>
 
@@ -2569,7 +3057,7 @@ export default function InventoryManagerDashboard() {
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                   <button
                     type="button"
-                    onClick={exportReportToCSV}
+                    onClick={handleDownloadPdfReport}
                     style={{
                       padding: '10px 18px',
                       background: '#047857',
@@ -2582,17 +3070,17 @@ export default function InventoryManagerDashboard() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      boxShadow: '0 2px 4px rgba(4, 120, 87, 0.2)',
+                      boxShadow: '0 2px 4px rgba(4, 120, 87, 0.25)',
                     }}
                   >
-                    Export to CSV Spreadsheet
+                    <span>📥</span> Download Report (PDF)
                   </button>
                   <button
                     type="button"
-                    onClick={handlePrintReport}
+                    onClick={handleDownloadMasterDossierPdf}
                     style={{
                       padding: '10px 18px',
-                      background: '#1f2937',
+                      background: '#d97706',
                       color: '#ffffff',
                       border: 'none',
                       borderRadius: '8px',
@@ -2602,9 +3090,67 @@ export default function InventoryManagerDashboard() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
+                      boxShadow: '0 2px 4px rgba(217, 119, 6, 0.2)',
                     }}
                   >
-                    Print / Save as PDF
+                    <span>📑</span> Master Audit Dossier (PDF)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportReportToExcel}
+                    style={{
+                      padding: '10px 16px',
+                      background: '#0284c7',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontSize: '0.88rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <span>📊</span> Export Excel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportReportToCSV}
+                    style={{
+                      padding: '10px 16px',
+                      background: '#475569',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontSize: '0.88rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <span>📁</span> Export CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePrintReport}
+                    style={{
+                      padding: '10px 16px',
+                      background: '#1f2937',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontSize: '0.88rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <span>🖨️</span> Print
                   </button>
                 </div>
               </div>
@@ -3055,7 +3601,7 @@ export default function InventoryManagerDashboard() {
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
-                                  📄 PDF Invoice
+                                  PDF Invoice
                                 </button>
                               </td>
                             </tr>
@@ -3360,7 +3906,7 @@ export default function InventoryManagerDashboard() {
                 <div style={{ gridColumn: 'span 2', background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                     <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: '#1e293b' }}>
-                      📦 Goods &amp; Items Available Through Supplier *
+                      Goods &amp; Items Available Through Supplier *
                     </label>
                     <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 500 }}>
                       {((supplierForm.suppliedItems || '').split(',').map((s) => s.trim()).filter(Boolean)).length} item(s) listed

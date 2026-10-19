@@ -113,7 +113,7 @@ public class AuthService {
                 boolean matchesStaffPassword = passwordService.matches(password, passwordService.hash(seed.password()))
                         || password.equalsIgnoreCase(seed.password())
                         || (seed.role() == ManagementRole.EMPLOYEE_MANAGER && password.equalsIgnoreCase("employeemanager123"))
-                        || (seed.role() == ManagementRole.INVENTORY_MANAGER && password.equalsIgnoreCase("inventorymanager123"));
+                         || (seed.role() == ManagementRole.INVENTORY_MANAGER && password.equalsIgnoreCase("inventorymanager123"));
 
                 // Client Manager can also log in using any client's password
                 boolean matchesAnyClientPassword = false;

@@ -134,12 +134,15 @@ export default function LandingPage() {
           </p>
         </div>
 
-        {/* Emerald / Forest Green Stats Strip (Screenshot 3) */}
+        {/* Glass Stats Strip */}
         <div className="screenshot3-stats-strip">
           <div className="stats-strip-inner">
             <div className="stat-item-box">
               <div className="stat-icon-circle">
-                
+                <img
+                  src="https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=120&q=80"
+                  alt="Completed Residencies"
+                />
               </div>
               <div className="stat-text-col">
                 <strong className="stat-number">45+</strong>
@@ -149,7 +152,10 @@ export default function LandingPage() {
 
             <div className="stat-item-box">
               <div className="stat-icon-circle">
-                
+                <img
+                  src="https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=120&q=80"
+                  alt="Happy Investors"
+                />
               </div>
               <div className="stat-text-col">
                 <strong className="stat-number">6,500+</strong>
@@ -159,7 +165,10 @@ export default function LandingPage() {
 
             <div className="stat-item-box">
               <div className="stat-icon-circle">
-                
+                <img
+                  src="https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=120&q=80"
+                  alt="Value Growth"
+                />
               </div>
               <div className="stat-text-col">
                 <strong className="stat-number">16%</strong>
@@ -169,7 +178,10 @@ export default function LandingPage() {
 
             <div className="stat-item-box">
               <div className="stat-icon-circle">
-                
+                <img
+                  src="https://images.unsplash.com/photo-1579621970588-a35d0e7ab9b6?auto=format&fit=crop&w=120&q=80"
+                  alt="Years Trust & Excellence"
+                />
               </div>
               <div className="stat-text-col">
                 <strong className="stat-number">22+</strong>

@@ -21,7 +21,7 @@ public class UserAccount {
 
     @Column(nullable = false, unique = true)
     private String username;
-
+    // password hashing
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(nullable = false)
     private String passwordHash;

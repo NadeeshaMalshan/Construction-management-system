@@ -669,6 +669,339 @@ export function downloadPurchaseOrderInvoice(po, supplier = null) {
 }
 
 /**
+ * Download official Client Payment Invoice & Tax Receipt (PDF)
+ */
+export function downloadPaymentInvoice(payment, client = null, project = null) {
+  if (!payment) return;
+
+  try {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
+
+    const invNum = payment.referenceNumber
+      ? `INV-${payment.referenceNumber}`
+      : `INV-PAY-${payment.id ? String(payment.id).padStart(5, '0') : Date.now().toString().slice(-6)}`;
+    const fileName = `Odiliya_Payment_Invoice_${invNum}.pdf`;
+
+    const clientObj = client || payment.client || {};
+    const clientName = clientObj.name || 'Valued Client';
+    const clientPhone = clientObj.phone || 'N/A';
+    const clientEmail = clientObj.email || 'N/A';
+    const clientAddress = clientObj.address || 'Sri Lanka';
+
+    const projectObj = project || payment.project || {};
+    const projectName = projectObj.name || 'General Construction & Property Account';
+    const projectLocation = projectObj.location || 'Western Province, Sri Lanka';
+    const projectCategory = projectObj.category || 'Luxury Housing / Residential Development';
+
+    const rawAmount = Number(payment.amount || 0);
+    const formattedAmount = rawAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const paymentDateStr = payment.paymentDate
+      ? new Date(payment.paymentDate).toLocaleDateString('en-GB')
+      : new Date().toLocaleDateString('en-GB');
+
+    const rawMethod = String(payment.paymentMethod || 'BANK_TRANSFER').toUpperCase();
+    const isCard = rawMethod.includes('CARD') || rawMethod.includes('VISA') || rawMethod.includes('MASTER');
+    const paymentMethodLabel = isCard ? 'Online Credit/Debit Card Gateway' : 'Direct Online Bank Transfer';
+
+    const paymentStatus = payment.status || (isCard ? 'Payment Successful' : 'Confirmed');
+
+    // 1. TOP HEADER BANNER
+    doc.setFillColor(15, 76, 58); // Deep Emerald
+    doc.rect(0, 0, 210, 32, 'F');
+
+    doc.setFillColor(217, 119, 6); // Warm Amber
+    doc.rect(0, 32, 210, 2, 'F');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.setTextColor(255, 255, 255);
+    doc.text('ODILIYA HOMES & REAL ESTATE (PVT) LTD', 14, 13);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(209, 250, 229);
+    doc.text('OFFICIAL CLIENT ACCOUNTS, BILLING & FINANCIAL SETTLEMENTS DIVISION', 14, 19);
+    doc.text('Reg No: PV-128940 | VAT ID: 102938475-7000 | Web: www.odiliyahomes.lk', 14, 25);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(255, 255, 255);
+    doc.text('TAX INVOICE & RECEIPT', 196, 14, { align: 'right' });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(254, 240, 138); // Yellow accent
+    doc.text(invNum, 196, 21, { align: 'right' });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(209, 250, 229);
+    doc.text(`Issue Date: ${paymentDateStr}`, 196, 27, { align: 'right' });
+
+    // 2. METADATA CARDS (COMPANY vs CLIENT)
+    const cardY = 40;
+    const cardHeight = 44;
+    const cardWidth = 88;
+
+    // Company Card (Left)
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(14, cardY, cardWidth, cardHeight, 2, 2, 'FD');
+
+    doc.setFillColor(15, 76, 58);
+    doc.rect(14, cardY, cardWidth, 6, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text('ISSUED BY / FINANCIAL ENTITY', 18, cardY + 4.2);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Odiliya Residencies & Homes (Pvt) Ltd', 18, cardY + 12);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text('Head Office: No. 120, Negombo Road, Peliyagoda', 18, cardY + 17);
+    doc.text('Finance & Client Escrow Accounts Desk', 18, cardY + 22);
+    doc.text('Direct Hotline: +94 11 234 5678 | +94 77 123 4567', 18, cardY + 27);
+    doc.text('Email: finance@odiliyahomes.lk', 18, cardY + 32);
+    doc.text('Corporate Bankers: Commercial Bank of Ceylon PLC', 18, cardY + 37);
+
+    // Client Card (Right)
+    const cliX = 108;
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(cliX, cardY, cardWidth, cardHeight, 2, 2, 'FD');
+
+    doc.setFillColor(4, 120, 87);
+    doc.rect(cliX, cardY, cardWidth, 6, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text('BILLED TO / VALUED CLIENT', cliX + 4, cardY + 4.2);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`${clientName}`, cliX + 4, cardY + 12);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Client ID: CLI-${clientObj.id || 'REG'} | Contact: ${clientPhone}`, cliX + 4, cardY + 17);
+    doc.text(`Email: ${clientEmail}`, cliX + 4, cardY + 22);
+    doc.text(`Billing Address: ${clientAddress}`, cliX + 4, cardY + 27);
+    doc.text(`Project Assigned: ${projectName}`, cliX + 4, cardY + 32);
+    doc.text(`Location: ${projectLocation}`, cliX + 4, cardY + 37);
+
+    // 3. PAYMENT SPECIFICATIONS SUMMARY STRIP
+    const specY = 90;
+    doc.setFillColor(236, 253, 245);
+    doc.setDrawColor(167, 243, 208);
+    doc.roundedRect(14, specY, 182, 16, 2, 2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(4, 120, 87);
+    doc.text('TRANSACTION REF', 18, specY + 5.5);
+    doc.text('PAYMENT CHANNEL', 65, specY + 5.5);
+    doc.text('PAYMENT STATUS', 118, specY + 5.5);
+    doc.text('TOTAL CONFIRMED', 192, specY + 5.5, { align: 'right' });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(payment.referenceNumber || `PAY-${payment.id}`, 18, specY + 11.5);
+    doc.text(paymentMethodLabel, 65, specY + 11.5);
+
+    // Clean status text without non-ASCII bullet characters (which break in standard jsPDF fonts as %Ï)
+    const cleanStatus = String(paymentStatus || (isCard ? 'Payment Successful' : 'Confirmed'))
+      .replace(/[^\x20-\x7E]/g, '')
+      .trim();
+    doc.setFillColor(22, 163, 74);
+    doc.circle(120, specY + 10.5, 1.2, 'F');
+    doc.setTextColor(22, 101, 52);
+    doc.text(cleanStatus || 'Payment Successful', 123, specY + 11.5);
+
+    doc.setTextColor(15, 76, 58);
+    doc.text(`LKR ${formattedAmount}`, 192, specY + 11.5, { align: 'right' });
+
+    // 4. ITEMIZED INVOICE TABLE
+    const tableBody = [
+      [
+        '1',
+        `Milestone Payment / Construction Downpayment\nProject: ${projectName} (${projectCategory})`,
+        'Escrow Stage Payment',
+        paymentMethodLabel,
+        payment.referenceNumber || `REF-${payment.id}`,
+        `LKR ${formattedAmount}`,
+      ],
+    ];
+
+    autoTable(doc, {
+      startY: 112,
+      head: [['#', 'Description & Construction Particulars', 'Service Type', 'Payment Method', 'Reference Code', 'Amount (LKR)']],
+      body: tableBody,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [15, 76, 58],
+        textColor: 255,
+        fontStyle: 'bold',
+        fontSize: 8,
+        halign: 'left',
+        cellPadding: 3,
+      },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 10 },
+        1: { halign: 'left', cellWidth: 72, fontStyle: 'bold' },
+        2: { halign: 'left', cellWidth: 32 },
+        3: { halign: 'left', cellWidth: 32 },
+        4: { halign: 'center', cellWidth: 20 },
+        5: { halign: 'right', cellWidth: 26, fontStyle: 'bold', textColor: [15, 76, 58] },
+      },
+      bodyStyles: {
+        fontSize: 8,
+        textColor: [30, 41, 59],
+        cellPadding: 4,
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    const tableEnd = doc.lastAutoTable ? doc.lastAutoTable.finalY : 145;
+
+    // 5. TOTALS AND REMARKS
+    const summaryY = tableEnd + 8;
+
+    // Remarks & Policy Box
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(14, summaryY, 105, 36, 2, 2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(15, 76, 58);
+    doc.text('OFFICIAL PAYMENT ACKNOWLEDGMENT', 18, summaryY + 6);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(71, 85, 105);
+    const invoiceNotes = payment.notes
+      ? `Notes: ${payment.notes}. This payment has been credited to your official construction contract ledger.`
+      : 'This invoice certifies that the stated payment has been recorded and credited to the designated construction escrow account under Odiliya Homes & Real Estate (Pvt) Ltd.';
+    const splitNotes = doc.splitTextToSize(invoiceNotes, 97);
+    doc.text(splitNotes, 18, summaryY + 12);
+
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(6.8);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Authorized by: Odiliya Financial Treasury & Client Management Desk', 18, summaryY + 31);
+
+    // Totals Box
+    const totalsX = 124;
+    const totalsWidth = 72;
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(totalsX, summaryY, totalsWidth, 36, 2, 2, 'FD');
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Subtotal (Payment Gross):', totalsX + 4, summaryY + 7);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 41, 59);
+    doc.text(`LKR ${formattedAmount}`, totalsX + totalsWidth - 4, summaryY + 7, { align: 'right' });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('VAT & Stamp Duty Assessment:', totalsX + 4, summaryY + 14);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(71, 85, 105);
+    doc.text('0.00 (Exempt/Included)', totalsX + totalsWidth - 4, summaryY + 14, { align: 'right' });
+
+    // Net Paid Highlight Box
+    doc.setFillColor(15, 76, 58);
+    doc.roundedRect(totalsX + 2, summaryY + 20, totalsWidth - 4, 12, 1.5, 1.5, 'F');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text('TOTAL PAID:', totalsX + 5, summaryY + 27.5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(254, 240, 138); // Yellow accent
+    doc.text(`LKR ${formattedAmount}`, totalsX + totalsWidth - 6, summaryY + 27.5, { align: 'right' });
+
+    // 6. OFFICIAL SEALS & SIGNATURES
+    const signY = summaryY + 44;
+
+    doc.setDrawColor(148, 163, 184);
+    doc.line(18, signY + 14, 64, signY + 14);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Client Accounts Officer', 18, signY + 18);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Finance & Treasury Desk', 18, signY + 21.5);
+
+    doc.line(82, signY + 14, 128, signY + 14);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Client Manager', 82, signY + 18);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Authorized Commercial Representative', 82, signY + 21.5);
+
+    doc.line(146, signY + 14, 192, signY + 14);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Odiliya Official Corporate Seal', 146, signY + 18);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Verified Digital Certificate', 146, signY + 21.5);
+
+    // 7. BOTTOM BANNER
+    doc.setFillColor(15, 76, 58);
+    doc.rect(0, 289, 210, 8, 'F');
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(209, 250, 229);
+    doc.text('ODILIYA HOMES & REAL ESTATE (PVT) LTD — OFFICIAL COMPUTER-GENERATED TAX INVOICE & RECEIPT', 14, 294);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('VERIFIED PAYMENT RECORD', 196, 294, { align: 'right' });
+
+    doc.save(fileName);
+  } catch (err) {
+    console.error('Invoice generation error, fallback text download:', err);
+    downloadFile(null, `Odiliya_Payment_Invoice_${payment.id || 'RECORD'}.txt`, 'Client Payment Tax Invoice & Receipt', {
+      invoiceNumber: payment.referenceNumber || `PAY-${payment.id}`,
+      client: client?.name || payment.client?.name,
+      project: project?.name || payment.project?.name,
+      amount: `LKR ${payment.amount}`,
+      method: payment.paymentMethod,
+      date: payment.paymentDate,
+      status: payment.status,
+    });
+  }
+}
+
+/**
  * Helper to safely convert an image URL or data URL to base64 for jsPDF
  */
 async function getBase64Image(url) {
@@ -1218,3 +1551,526 @@ export async function generateProjectDetailsPdf(project, {
   const safeFileName = `Odiliya_Project_Dossier_${(project.name || 'Project').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`;
   doc.save(safeFileName);
 }
+
+/**
+ * Download professional branded PDF report for Material and Inventory module
+ */
+export function downloadMaterialInventoryReportPdf({
+  reportType = 'inventory_stock',
+  reportTitle = 'Material & Inventory Report',
+  subtitle = '',
+  stats = [],
+  headers = [],
+  rows = [],
+  summaryNotes = '',
+  fileName = '',
+}) {
+  try {
+    const isLandscape = headers.length >= 7;
+    const doc = new jsPDF({
+      orientation: isLandscape ? 'landscape' : 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
+
+    const pageWidth = isLandscape ? 297 : 210;
+    const pageHeight = isLandscape ? 210 : 297;
+    const margin = 14;
+
+    const renderHeader = (pageNumber) => {
+      // Emerald Top Banner
+      doc.setFillColor(15, 76, 58); // Emerald #0F4C3A
+      doc.rect(0, 0, pageWidth, 24, 'F');
+
+      // Warm Amber Accent Bar
+      doc.setFillColor(217, 119, 6); // Gold #D97706
+      doc.rect(0, 24, pageWidth, 2, 'F');
+
+      // Odiliya Branding
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.setTextColor(255, 255, 255);
+      doc.text('ODILIYA HOMES & REAL ESTATE (PVT) LTD', margin, 11);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(209, 250, 229);
+      doc.text('CENTRAL MATERIAL PROCUREMENT & WAREHOUSE INVENTORY CONTROL', margin, 16.5);
+      doc.text('Reg No: PV-128940 | Official Supply Chain & Asset Verification System', margin, 20.5);
+
+      // Right Header Badge
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(254, 240, 138); // Yellow accent
+      doc.text('OFFICIAL VERIFIED AUDIT', pageWidth - margin, 11, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(255, 255, 255);
+      doc.text(`Ref: ODLY-INV-${Date.now().toString().slice(-6)} | Date: ${new Date().toLocaleDateString('en-GB')}`, pageWidth - margin, 17, { align: 'right' });
+    };
+
+    const renderFooter = (pageNumber, totalPages) => {
+      doc.setFillColor(15, 76, 58);
+      doc.rect(0, pageHeight - 8, pageWidth, 8, 'F');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(209, 250, 229);
+      doc.text('Odiliya Homes & Real Estate (Pvt) Ltd — Confidential Internal Warehouse Audit Record', margin, pageHeight - 3);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(255, 255, 255);
+      doc.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - margin, pageHeight - 3, { align: 'right' });
+    };
+
+    renderHeader(1);
+
+    let curY = 32;
+
+    // Report Title Section
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(15, 23, 42);
+    doc.text(reportTitle.toUpperCase(), margin, curY);
+
+    curY += 5;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(
+      subtitle || `Generated on: ${new Date().toLocaleString()} | Certified Inventory Manager Desk`,
+      margin,
+      curY
+    );
+
+    curY += 6;
+
+    // Stats Metric Cards Block
+    if (stats && stats.length > 0) {
+      const cardWidth = Math.min(52, (pageWidth - margin * 2 - (stats.length - 1) * 4) / stats.length);
+      const cardHeight = 13;
+
+      stats.forEach((st, i) => {
+        const x = margin + i * (cardWidth + 4);
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(x, curY, cardWidth, cardHeight, 1.5, 1.5, 'FD');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6);
+        doc.setTextColor(100, 116, 139);
+        doc.text(String(st.label || '').toUpperCase(), x + 2.5, curY + 4);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8.5);
+        doc.setTextColor(15, 76, 58);
+        doc.text(String(st.value || '0'), x + 2.5, curY + 10);
+      });
+
+      curY += cardHeight + 6;
+    }
+
+    // AutoTable Data Table
+    autoTable(doc, {
+      startY: curY,
+      head: [headers],
+      body: rows,
+      theme: 'striped',
+      headStyles: {
+        fillColor: [15, 76, 58],
+        textColor: 255,
+        fontStyle: 'bold',
+        fontSize: 7.5,
+        cellPadding: 2,
+      },
+      bodyStyles: {
+        fontSize: 7,
+        textColor: [30, 41, 59],
+        cellPadding: 2,
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      margin: { left: margin, right: margin, bottom: 22 },
+      didDrawPage: (data) => {
+        if (data.pageNumber > 1) {
+          renderHeader(data.pageNumber);
+        }
+      },
+    });
+
+    curY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 6 : curY + 30;
+
+    // Summary Notes if available
+    if (summaryNotes) {
+      if (curY > pageHeight - 38) {
+        doc.addPage();
+        renderHeader(doc.internal.getNumberOfPages());
+        curY = 32;
+      }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 76, 58);
+      doc.text('AUDIT SUMMARY NOTE:', margin, curY);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(71, 85, 105);
+      doc.text(summaryNotes, margin, curY + 4, { maxWidth: pageWidth - margin * 2 });
+      curY += 10;
+    }
+
+    // Signatures / Verification Block
+    if (curY > pageHeight - 32) {
+      doc.addPage();
+      renderHeader(doc.internal.getNumberOfPages());
+      curY = 32;
+    }
+
+    const signY = Math.max(curY + 4, pageHeight - 28);
+    const colWidth = (pageWidth - margin * 2) / 3;
+
+    doc.setDrawColor(148, 163, 184);
+    doc.line(margin + 2, signY + 8, margin + 45, signY + 8);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Prepared By (Inventory Manager)', margin + 2, signY + 11.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Warehouse Operations Division', margin + 2, signY + 14.5);
+
+    doc.line(margin + colWidth + 2, signY + 8, margin + colWidth + 45, signY + 8);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Verified By (Procurement Lead)', margin + colWidth + 2, signY + 11.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Quantity Surveying Desk', margin + colWidth + 2, signY + 14.5);
+
+    doc.line(margin + colWidth * 2 + 2, signY + 8, margin + colWidth * 2 + 45, signY + 8);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Authorized By (Internal Audit)', margin + colWidth * 2 + 2, signY + 11.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Directorate Clearance Seal', margin + colWidth * 2 + 2, signY + 14.5);
+
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      renderFooter(i, totalPages);
+    }
+
+    const safeFile = fileName || `Odiliya_${reportType}_Report_${new Date().toISOString().slice(0, 10)}.pdf`;
+    doc.save(safeFile);
+  } catch (err) {
+    console.error('Error generating inventory report PDF:', err);
+    triggerDownload(null, `${reportType}-report.pdf`);
+  }
+}
+
+/**
+ * Download comprehensive Master Inventory & Analytics Executive Dossier PDF
+ */
+export function downloadMasterInventoryAnalyticsPdf({
+  materials = [],
+  categories = [],
+  purchaseOrders = [],
+  requests = [],
+  stockAlerts = [],
+  suppliers = [],
+}) {
+  try {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
+
+    const pageWidth = 210;
+    const pageHeight = 297;
+    const margin = 14;
+
+    const renderHeader = (pageNumber) => {
+      doc.setFillColor(15, 76, 58);
+      doc.rect(0, 0, pageWidth, 24, 'F');
+
+      doc.setFillColor(217, 119, 6);
+      doc.rect(0, 24, pageWidth, 2, 'F');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.setTextColor(255, 255, 255);
+      doc.text('ODILIYA HOMES & REAL ESTATE (PVT) LTD', margin, 11);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(209, 250, 229);
+      doc.text('MASTER SUPPLY CHAIN, MATERIAL INVENTORY & AUDIT DOSSIER', margin, 16.5);
+      doc.text('Reg No: PV-128940 | Official Directorate & Operations Report', margin, 20.5);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(254, 240, 138);
+      doc.text('EXECUTIVE AUDIT DOSSIER', pageWidth - margin, 11, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(255, 255, 255);
+      doc.text(`Ref: ODLY-INV-MASTER-${Date.now().toString().slice(-6)} | Date: ${new Date().toLocaleDateString('en-GB')}`, pageWidth - margin, 17, { align: 'right' });
+    };
+
+    const renderFooter = (pageNumber, totalPages) => {
+      doc.setFillColor(15, 76, 58);
+      doc.rect(0, pageHeight - 8, pageWidth, 8, 'F');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(209, 250, 229);
+      doc.text('Odiliya Homes & Real Estate (Pvt) Ltd — Master Supply Chain & Warehouse Asset Dossier', margin, pageHeight - 3);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(255, 255, 255);
+      doc.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - margin, pageHeight - 3, { align: 'right' });
+    };
+
+    renderHeader(1);
+
+    let curY = 32;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(15, 23, 42);
+    doc.text('MASTER INVENTORY & PROCUREMENT AUDIT DOSSIER', margin, curY);
+
+    curY += 5;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Comprehensive corporate inventory audit, material valuations, procurement analysis and site stock alerts.`, margin, curY);
+
+    curY += 6;
+
+    // Metrics calculation
+    const totalValuation = materials.reduce((acc, m) => acc + Number((m.quantity || 0) * (m.unitPrice || 0)), 0);
+    const lowStockCount = materials.filter((m) => m.quantity <= m.minStockLevel).length;
+    const poSpend = purchaseOrders.reduce((acc, p) => acc + Number(p.totalAmount || (p.quantity * p.unitPrice) || 0), 0);
+    const pendingRequests = requests.filter((r) => r.status === 'PENDING').length;
+    const pendingAlerts = stockAlerts.filter((a) => a.status === 'PENDING').length;
+
+    const statBoxes = [
+      { label: 'TOTAL INVENTORY VALUE', val: `LKR ${Number(totalValuation).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+      { label: 'CATALOG MATERIAL SKUs', val: `${materials.length} SKUs` },
+      { label: 'LOW STOCK WARNINGS', val: `${lowStockCount} Items` },
+      { label: 'PROCUREMENT SPEND', val: `LKR ${Number(poSpend).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+      { label: 'PENDING REQUISITIONS', val: `${pendingRequests} Requests` },
+      { label: 'REGISTERED SUPPLIERS', val: `${suppliers.length} Vendors` },
+    ];
+
+    const cardWidth = (pageWidth - margin * 2 - 2 * 4) / 3;
+    const cardHeight = 13;
+
+    statBoxes.forEach((st, i) => {
+      const row = Math.floor(i / 3);
+      const col = i % 3;
+      const x = margin + col * (cardWidth + 4);
+      const y = curY + row * (cardHeight + 3);
+
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(x, y, cardWidth, cardHeight, 1.5, 1.5, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6);
+      doc.setTextColor(100, 116, 139);
+      doc.text(st.label, x + 2.5, y + 4);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(15, 76, 58);
+      doc.text(st.val, x + 2.5, y + 10);
+    });
+
+    curY += (cardHeight + 3) * 2 + 5;
+
+    // SECTION 1: Category Distribution Table
+    const catMap = {};
+    materials.forEach((m) => {
+      const cat = m.category || 'General';
+      if (!catMap[cat]) catMap[cat] = { count: 0, val: 0, lowStock: 0 };
+      catMap[cat].count += 1;
+      catMap[cat].val += Number((m.quantity || 0) * (m.unitPrice || 0));
+      if (m.quantity <= m.minStockLevel) catMap[cat].lowStock += 1;
+    });
+
+    const catRows = Object.entries(catMap).map(([cName, data]) => [
+      cName,
+      `${data.count} items`,
+      `${data.lowStock} low stock`,
+      `LKR ${data.val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      totalValuation > 0 ? `${((data.val / totalValuation) * 100).toFixed(1)}%` : '0%',
+    ]);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 76, 58);
+    doc.text('1. MATERIAL CATEGORY ALLOCATION & ASSET DISTRIBUTION', margin, curY);
+    curY += 3;
+
+    autoTable(doc, {
+      startY: curY,
+      head: [['Category Classification', 'Item Count', 'Health Alert', 'Asset Valuation (LKR)', '% Share']],
+      body: catRows,
+      theme: 'striped',
+      headStyles: { fillColor: [15, 76, 58], textColor: 255, fontStyle: 'bold', fontSize: 7.5, cellPadding: 2 },
+      bodyStyles: { fontSize: 7, textColor: [30, 41, 59], cellPadding: 2 },
+      margin: { left: margin, right: margin },
+      didDrawPage: (data) => {
+        if (data.pageNumber > 1) renderHeader(data.pageNumber);
+      },
+    });
+
+    curY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 8 : curY + 40;
+
+    // SECTION 2: Top Stock Items Snapshot
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 76, 58);
+    doc.text('2. TOP INVENTORY STOCK & VALUATION REGISTER', margin, curY);
+    curY += 3;
+
+    const matRows = materials.slice(0, 15).map((m) => {
+      const val = Number((m.quantity || 0) * (m.unitPrice || 0));
+      const status = m.quantity <= 0 ? 'OUT OF STOCK' : m.quantity <= m.minStockLevel ? 'LOW STOCK' : 'HEALTHY';
+      return [
+        m.materialCode || '—',
+        m.name || '—',
+        m.category || '—',
+        `${m.quantity || 0} ${m.unit || ''}`,
+        `LKR ${Number(m.unitPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        `LKR ${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        status,
+        m.location || 'Depot',
+      ];
+    });
+
+    autoTable(doc, {
+      startY: curY,
+      head: [['Code', 'Material Name', 'Category', 'Stock Qty', 'Unit Price', 'Total Value', 'Status', 'Location']],
+      body: matRows,
+      theme: 'striped',
+      headStyles: { fillColor: [15, 76, 58], textColor: 255, fontStyle: 'bold', fontSize: 7.5, cellPadding: 2 },
+      bodyStyles: { fontSize: 6.5, textColor: [30, 41, 59], cellPadding: 2 },
+      margin: { left: margin, right: margin },
+      didDrawPage: (data) => {
+        if (data.pageNumber > 1) renderHeader(data.pageNumber);
+      },
+    });
+
+    curY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 8 : curY + 40;
+
+    // SECTION 3: Recent Procurement Purchase Orders
+    if (purchaseOrders.length > 0) {
+      if (curY > pageHeight - 50) {
+        doc.addPage();
+        renderHeader(doc.internal.getNumberOfPages());
+        curY = 32;
+      }
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(15, 76, 58);
+      doc.text('3. RECENT PROCUREMENT PURCHASE ORDERS (PO)', margin, curY);
+      curY += 3;
+
+      const poRows = purchaseOrders.slice(0, 10).map((p) => {
+        const total = Number(p.totalAmount || (p.quantity * p.unitPrice) || 0);
+        return [
+          p.poNumber || `PO-${p.id}`,
+          p.orderDate ? new Date(p.orderDate).toLocaleDateString('en-GB') : '—',
+          p.supplier || '—',
+          p.material?.name || '—',
+          `${p.quantity} ${p.material?.unit || ''}`,
+          `LKR ${total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          p.status || 'ORDERED',
+        ];
+      });
+
+      autoTable(doc, {
+        startY: curY,
+        head: [['PO Number', 'Order Date', 'Supplier', 'Material', 'Qty', 'Total Spend', 'Status']],
+        body: poRows,
+        theme: 'striped',
+        headStyles: { fillColor: [15, 76, 58], textColor: 255, fontStyle: 'bold', fontSize: 7.5, cellPadding: 2 },
+        bodyStyles: { fontSize: 6.5, textColor: [30, 41, 59], cellPadding: 2 },
+        margin: { left: margin, right: margin },
+        didDrawPage: (data) => {
+          if (data.pageNumber > 1) renderHeader(data.pageNumber);
+        },
+      });
+
+      curY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 8 : curY + 40;
+    }
+
+    // Signatures / Verification Block
+    if (curY > pageHeight - 32) {
+      doc.addPage();
+      renderHeader(doc.internal.getNumberOfPages());
+      curY = 32;
+    }
+
+    const signY = Math.max(curY + 4, pageHeight - 28);
+    const colWidth = (pageWidth - margin * 2) / 3;
+
+    doc.setDrawColor(148, 163, 184);
+    doc.line(margin + 2, signY + 8, margin + 45, signY + 8);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Prepared By (Inventory Manager)', margin + 2, signY + 11.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Warehouse Operations Division', margin + 2, signY + 14.5);
+
+    doc.line(margin + colWidth + 2, signY + 8, margin + colWidth + 45, signY + 8);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Verified By (Procurement Lead)', margin + colWidth + 2, signY + 11.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Quantity Surveying Desk', margin + colWidth + 2, signY + 14.5);
+
+    doc.line(margin + colWidth * 2 + 2, signY + 8, margin + colWidth * 2 + 45, signY + 8);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Authorized By (Internal Audit)', margin + colWidth * 2 + 2, signY + 11.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Directorate Clearance Seal', margin + colWidth * 2 + 2, signY + 14.5);
+
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      renderFooter(i, totalPages);
+    }
+
+    doc.save(`Odiliya_Master_Inventory_Analytics_Dossier_${new Date().toISOString().slice(0, 10)}.pdf`);
+  } catch (err) {
+    console.error('Error generating master inventory dossier PDF:', err);
+    triggerDownload(null, 'master-inventory-dossier.pdf');
+  }
+}
+

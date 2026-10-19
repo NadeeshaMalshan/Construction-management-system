@@ -41,7 +41,7 @@ public class ProjectTask {
     public String getDescription() { return description; } public void setDescription(String description) { this.description = description; }
     public LocalDate getStartDate() { return startDate; } public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
     public LocalDate getDeadline() { return deadline; } public void setDeadline(LocalDate deadline) { this.deadline = deadline; }
-    public String getStatus() { return status; } public void setStatus(String status) { this.status = status; }
+    public String getStatus() { return status; } public void setStatus(String status) { this.status = (status == null || status.trim().isEmpty()) ? "TODO" : status.trim(); }
     public Project getProject() { return project; } public void setProject(Project project) { this.project = project; }
     public Employee getAssignedEmployee() { return assignedEmployee; } public void setAssignedEmployee(Employee assignedEmployee) { this.assignedEmployee = assignedEmployee; }
     public int getProgressPercentage() { return progressPercentage; } public void setProgressPercentage(int progressPercentage) { this.progressPercentage = progressPercentage; }

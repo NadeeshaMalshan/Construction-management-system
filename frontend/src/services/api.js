@@ -177,16 +177,28 @@ export const linkInquiryContract = (id, contractId) => request(`/api/inquiries/$
   method: 'PUT',
   body: { contractId },
 });
+export const linkInquiryProject = (id, projectId) => request(`/api/inquiries/${id}/project-linked`, {
+  method: 'PUT',
+  body: { projectId },
+});
 // Threaded conversation: senderRole is 'CLIENT' or 'PROJECT_MANAGER'
 export const sendInquiryMessage = (id, { senderRole, senderName, message }) => request(`/api/inquiries/${id}/messages`, {
   method: 'POST',
   body: { senderRole, senderName, message },
+});
+export const clientAcceptInquiry = (id) => request(`/api/inquiries/${id}/client-accept`, {
+  method: 'PUT',
+});
+export const markInquiryPaid = (id, payload) => request(`/api/inquiries/${id}/downpayment-completed`, {
+  method: 'PUT',
+  body: payload,
 });
 export const deleteInquiry = (id) => request(`/api/inquiries/${id}`, { method: 'DELETE' });
 
 // Custom Project Requests (CM-PM-Client Workflow)
 export const getProjectRequests = (clientId) => request(`/api/project-requests${clientId ? `?clientId=${clientId}` : ''}`);
 export const getForwardedProjectRequests = () => request('/api/project-requests/forwarded-to-pm');
+export const getCustomProjectRequests = () => request('/api/project-requests/custom-designs');
 export const getProjectRequestById = (id) => request(`/api/project-requests/${id}`);
 export const createProjectRequest = (data) => request('/api/project-requests', { method: 'POST', body: data });
 export const forwardProjectRequestToPm = (id, cmNotes, forwardedByCm = 'Client Manager') => request(`/api/project-requests/${id}/forward-to-pm`, {
@@ -212,6 +224,10 @@ export const rejectProjectRequest = (id, payload = {}) => request(`/api/project-
 export const startProjectFromRequest = (id, projectData = {}, startedBy = 'Project Manager') => request(`/api/project-requests/${id}/start-project?startedBy=${encodeURIComponent(startedBy)}`, {
   method: 'POST',
   body: projectData,
+});
+export const markProjectRequestPaid = (id, payload) => request(`/api/project-requests/${id}/mark-paid`, {
+  method: 'PUT',
+  body: payload,
 });
 export const deleteProjectRequest = (id) => request(`/api/project-requests/${id}`, { method: 'DELETE' });
 
@@ -249,7 +265,13 @@ export const getTasks = (projectId, employeeId) => {
   const qs = query.toString();
   return request(`/api/project-management/tasks${qs ? `?${qs}` : ''}`);
 };
-export const createTask = (task) => request('/api/project-management/tasks', { method: 'POST', body: task });
+export const createTask = (task) => request('/api/project-management/tasks', {
+  method: 'POST',
+  body: {
+    ...task,
+    status: (task && task.status && String(task.status).trim()) ? String(task.status).trim() : 'TODO',
+  },
+});
 export const updateTask = (id, task) => request(`/api/project-management/tasks/${id}`, { method: 'PUT', body: task });
 export const updateTaskProgress = (id, payload) => request(`/api/project-management/tasks/${id}/progress`, {
   method: 'PATCH',
@@ -304,6 +326,17 @@ export const getEmployeeAttendanceHistory = (id) => request(`/api/employees/${id
 export const getAttendanceSummary = (date = '') => request(`/api/employees/attendance/summary${date ? `?date=${date}` : ''}`);
 export const deleteAttendanceRecord = (id) => request(`/api/employees/attendance/${id}`, { method: 'DELETE' });
 export const deleteAttendanceByQuery = (employeeId, date) => request(`/api/employees/attendance?employeeId=${employeeId}&date=${date}`, { method: 'DELETE' });
+
+// QR Code Attendance System
+export const getTodayAttendanceQr = () => request('/api/employees/attendance/qr/today');
+export const generateDailyAttendanceQr = (createdBy = 'Employee Manager') => request('/api/employees/attendance/qr/generate', {
+  method: 'POST',
+  body: { createdBy },
+});
+export const scanAttendanceQr = (payload) => request('/api/employees/attendance/qr/scan', {
+  method: 'POST',
+  body: payload,
+});
 
 // Employee Portal (Step 6)
 export const getMyAssignedProjects = (username) => request(`/api/employees/my-projects${username ? `?username=${encodeURIComponent(username)}` : ''}`);

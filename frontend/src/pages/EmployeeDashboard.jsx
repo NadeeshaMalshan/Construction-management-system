@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { useAuth } from '../context/AuthContext';
@@ -15,8 +15,10 @@ import {
   getMaterialRequests,
   createMaterialRequest,
   getProjects,
+  scanAttendanceQr,
 } from '../services/api';
 import { downloadFile, exportCsv, exportExcel } from '../utils/documentDownload';
+import { Html5Qrcode } from 'html5-qrcode';
 
 // Roles list for profile editing
 const ROLES_LIST = [
@@ -45,6 +47,14 @@ const DEPARTMENTS = [
   'Operations & Logistics',
 ];
 
+const getTodayDateString = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 // EmployeeDashboard Component
 export default function EmployeeDashboard() {
   const { user, updateUser } = useAuth();
@@ -55,6 +65,10 @@ export default function EmployeeDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('projects');
+
+  // QR Attendance Scanner State
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scanNotice, setScanNotice] = useState('');
 
   // Profile Edit State
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -316,6 +330,12 @@ export default function EmployeeDashboard() {
   const attendanceRate =
     attendance.length > 0 ? Math.round((presentCount / attendance.length) * 100) : 100;
 
+  const todayStr = getTodayDateString();
+  const todayRecord = attendance.find((a) => {
+    const d = a.date ? String(a.date).slice(0, 10) : '';
+    return d === todayStr;
+  });
+
   const availableProjects = projects.length > 0 ? projects : allProjects;
   const assignedProjectIds = new Set(projects.map((p) => p.id));
   const myMaterialRequests = materialRequests.filter((r) => {
@@ -377,6 +397,33 @@ export default function EmployeeDashboard() {
                 <div style={{ fontSize: '0.75rem', opacity: 0.85, textTransform: 'uppercase', fontWeight: 600 }}>Attendance Records</div>
                 <div style={{ fontSize: '1.8rem', fontWeight: 800 }}>{attendance.length}</div>
               </div>
+
+              {/* Quick Scan Attendance Button in Hero Header */}
+              <button
+                type="button"
+                onClick={() => setIsScannerOpen(true)}
+                style={{
+                  background: todayRecord?.checkOutTime ? 'rgba(255,255,255,0.2)' : '#ffffff',
+                  color: todayRecord?.checkOutTime ? '#ffffff' : '#047857',
+                  border: 'none',
+                  padding: '12px 20px',
+                  borderRadius: '12px',
+                  fontWeight: 800,
+                  fontSize: '0.92rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                }}
+              >
+                <span>📷</span>
+                {todayRecord?.checkOutTime
+                  ? 'Shift Completed'
+                  : todayRecord
+                  ? 'Scan QR to Check-Out'
+                  : 'Scan Daily QR'}
+              </button>
             </div>
           </div>
         </section>
@@ -944,6 +991,7 @@ export default function EmployeeDashboard() {
                       </label>
                       <input
                         type="date"
+                        min={getTodayDateString()}
                         value={materialRequestForm.requiredDate}
                         onChange={(e) => setMaterialRequestForm({ ...materialRequestForm, requiredDate: e.target.value })}
                         style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
@@ -1087,9 +1135,100 @@ export default function EmployeeDashboard() {
           </div>
         )}
 
-        {/* TAB 4: MY ATTENDANCE LOG (VIEW ONLY) */}
+        {/* TAB 4: MY ATTENDANCE LOG (VIEW & QR SCAN) */}
         {activeTab === 'attendance' && (
           <div>
+            {scanNotice && (
+              <div style={{ background: '#ecfdf5', color: '#065f46', padding: '14px 18px', borderRadius: '10px', border: '1px solid #a7f3d0', marginBottom: '20px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>✅</span>
+                <span>{scanNotice}</span>
+              </div>
+            )}
+
+            {/* Today's Daily Attendance QR Action Card */}
+            <div style={{
+              background: todayRecord?.checkOutTime ? '#f0fdf4' : todayRecord ? '#fffbeb' : '#ffffff',
+              borderRadius: '12px',
+              padding: '20px 24px',
+              border: `1px solid ${todayRecord?.checkOutTime ? '#86efac' : todayRecord ? '#fde68a' : '#047857'}`,
+              boxShadow: '0 2px 6px rgba(0,0,0,0.06)',
+              marginBottom: '20px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '16px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '12px',
+                  background: todayRecord?.checkOutTime ? '#10b981' : todayRecord ? '#f59e0b' : '#047857',
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1.4rem'
+                }}>
+                  📷
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 800, color: '#111827', fontSize: '1.05rem' }}>
+                      Today's Attendance: {formatDate(todayStr)}
+                    </span>
+                    {todayRecord?.checkOutTime ? (
+                      <span style={{ background: '#10b981', color: '#fff', padding: '2px 9px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 800 }}>
+                        SHIFT COMPLETED
+                      </span>
+                    ) : todayRecord ? (
+                      <span style={{ background: '#f59e0b', color: '#fff', padding: '2px 9px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 800 }}>
+                        SHIFT ACTIVE (IN: {todayRecord.checkInTime})
+                      </span>
+                    ) : (
+                      <span style={{ background: '#64748b', color: '#fff', padding: '2px 9px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 800 }}>
+                        NOT CHECKED IN YET
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#4b5563' }}>
+                    {todayRecord?.checkOutTime
+                      ? `Both Check-In (${todayRecord.checkInTime}) and Check-Out (${todayRecord.checkOutTime}) are recorded for today. Great work!`
+                      : todayRecord
+                      ? `You checked in at ${todayRecord.checkInTime}. Scan the daily QR code when finishing your shift to record Check-Out.`
+                      : 'Scan the daily QR code displayed by your Employee Manager to record your Time-In for today.'}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                {!todayRecord?.checkOutTime && (
+                  <button
+                    type="button"
+                    onClick={() => setIsScannerOpen(true)}
+                    style={{
+                      padding: '12px 24px',
+                      background: todayRecord ? '#d97706' : '#047857',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '10px',
+                      fontWeight: 800,
+                      fontSize: '0.92rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      boxShadow: todayRecord ? '0 2px 6px rgba(217, 119, 6, 0.3)' : '0 2px 6px rgba(4, 120, 87, 0.3)',
+                    }}
+                  >
+                    <span>📷</span>
+                    {todayRecord ? 'Scan QR to Check-Out' : 'Scan QR for Check-In'}
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* Info Header Box */}
             <div style={{ background: '#ffffff', borderRadius: '12px', padding: '24px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
@@ -1098,7 +1237,7 @@ export default function EmployeeDashboard() {
                     My Attendance Log & Work Records
                   </h3>
                   <p style={{ color: '#6b7280', margin: 0, fontSize: '0.88rem' }}>
-                    Your official attendance history and check-in / check-out times recorded by the Employee Manager.
+                    Your official attendance history and check-in / check-out times recorded by the Employee Manager and QR scans.
                   </p>
                 </div>
 
@@ -1116,8 +1255,7 @@ export default function EmployeeDashboard() {
               </div>
 
               <div style={{ marginTop: '14px', background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.82rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                
-                <span>Attendance is officially verified and recorded by the Employee Manager. Employees can view their complete attendance history below.</span>
+                <span>Daily QR codes are valid until 11:59:59 PM each day. Scanned attendance is saved to your personal work records and automatically synced with the site management portal.</span>
               </div>
             </div>
 
@@ -1198,7 +1336,24 @@ export default function EmployeeDashboard() {
                             )}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '0.8rem', color: '#6b7280' }}>
-                            {att.recordedBy || 'Employee Manager'}
+                            {att.recordedBy === 'QR Code Scan' ? (
+                              <span style={{
+                                background: '#ecfdf5',
+                                color: '#047857',
+                                padding: '3px 8px',
+                                borderRadius: '12px',
+                                fontSize: '0.72rem',
+                                fontWeight: 700,
+                                border: '1px solid #a7f3d0',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}>
+                                📷 QR Code Scan
+                              </span>
+                            ) : (
+                              att.recordedBy || 'Employee Manager'
+                            )}
                           </td>
                         </tr>
                       ))
@@ -1683,7 +1838,515 @@ export default function EmployeeDashboard() {
         )}
       </main>
 
+      {/* Attendance QR Code Scanner Modal */}
+      <AttendanceScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        profile={profile}
+        user={user}
+        onSuccess={(result) => {
+          setScanNotice(result.message || 'Attendance recorded successfully!');
+          setTimeout(() => setScanNotice(''), 8000);
+          loadEmployeeData();
+        }}
+      />
+
       <Footer />
     </div>
   );
 }
+
+function AttendanceScannerModal({ isOpen, onClose, profile, user, onSuccess }) {
+  const [mode, setMode] = useState('camera'); // 'camera' | 'file' | 'manual'
+  const [facingMode, setFacingMode] = useState('environment'); // 'environment' (rear) | 'user' (front)
+  const [manualCode, setManualCode] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [successData, setSuccessData] = useState(null);
+  const [cameraPermissionError, setCameraPermissionError] = useState('');
+
+  const scannerRef = useRef(null);
+
+  const processScannedToken = async (rawScannedText) => {
+    if (!rawScannedText || isSubmitting) return;
+    setIsSubmitting(true);
+    setErrorMsg('');
+
+    try {
+      const result = await scanAttendanceQr({
+        token: rawScannedText.trim(),
+        employeeId: profile?.id,
+        username: user?.username,
+      });
+      setSuccessData(result);
+      if (onSuccess) {
+        onSuccess(result);
+      }
+    } catch (err) {
+      setErrorMsg(err.message || 'Failed to record attendance from QR scan.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen || mode !== 'camera' || successData) return;
+
+    let scanner = null;
+    let isMounted = true;
+    setCameraPermissionError('');
+
+    const startScanner = async () => {
+      try {
+        scanner = new Html5Qrcode('worker-qr-reader-mount');
+        scannerRef.current = scanner;
+
+        await scanner.start(
+          { facingMode: facingMode },
+          {
+            fps: 10,
+            qrbox: { width: 240, height: 240 },
+          },
+          async (decodedText) => {
+            if (isMounted) {
+              try {
+                if (scanner.isScanning) {
+                  await scanner.stop();
+                }
+              } catch (e) {}
+              processScannedToken(decodedText);
+            }
+          },
+          () => {}
+        );
+      } catch (err) {
+        if (isMounted) {
+          setCameraPermissionError(
+            'Camera access unavailable or blocked. Please allow camera permissions, or switch to "Upload QR Image" or "Enter Code" below.'
+          );
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      startScanner();
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+      isMounted = false;
+      if (scannerRef.current) {
+        try {
+          if (scannerRef.current.isScanning) {
+            scannerRef.current.stop().then(() => {
+              try { scannerRef.current.clear(); } catch (e) {}
+            }).catch(() => {});
+          } else {
+            scannerRef.current.clear();
+          }
+        } catch (e) {}
+      }
+    };
+  }, [isOpen, mode, facingMode, successData]);
+
+  if (!isOpen) return null;
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setErrorMsg('');
+    setIsSubmitting(true);
+
+    try {
+      const html5QrCode = new Html5Qrcode('worker-file-qr-temp');
+      const decodedText = await html5QrCode.scanFile(file, true);
+      html5QrCode.clear();
+      processScannedToken(decodedText);
+    } catch (err) {
+      setErrorMsg('No readable QR code found in this image. Please ensure the image is clear and try again.');
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleManualSubmit = (e) => {
+    e.preventDefault();
+    if (!manualCode.trim()) {
+      setErrorMsg('Please enter or paste the QR code token.');
+      return;
+    }
+    processScannedToken(manualCode.trim());
+  };
+
+  const resetScanner = () => {
+    setSuccessData(null);
+    setErrorMsg('');
+    setIsSubmitting(false);
+    setManualCode('');
+  };
+
+  return (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0, 0, 0, 0.75)',
+      zIndex: 9999,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '16px',
+    }}>
+      <div style={{
+        background: '#ffffff',
+        borderRadius: '16px',
+        maxWidth: '520px',
+        width: '100%',
+        padding: '28px',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+        position: 'relative',
+        maxHeight: '90vh',
+        overflowY: 'auto',
+      }}>
+        {/* Hidden container for file scan engine */}
+        <div id="worker-file-qr-temp" style={{ display: 'none' }} />
+
+        {/* Modal Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#111827', fontSize: '1.3rem', fontWeight: 800 }}>
+              Mark Attendance via QR
+            </h3>
+            <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: '0.85rem' }}>
+              Scan the daily QR code displayed by your Employee Manager.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: '#f3f4f6',
+              border: 'none',
+              borderRadius: '50%',
+              width: '34px',
+              height: '34px',
+              fontSize: '1.1rem',
+              color: '#4b5563',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Success View */}
+        {successData ? (
+          <div style={{ textAlign: 'center', padding: '16px 8px' }}>
+            <div style={{
+              width: '68px',
+              height: '68px',
+              borderRadius: '50%',
+              background: '#dcfce7',
+              color: '#15803d',
+              fontSize: '2.2rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 16px'
+            }}>
+              ✓
+            </div>
+
+            <span style={{
+              background: successData.action === 'CHECK_IN' ? '#ecfdf5' : '#eff6ff',
+              color: successData.action === 'CHECK_IN' ? '#047857' : '#1d4ed8',
+              padding: '4px 14px',
+              borderRadius: '16px',
+              fontWeight: 800,
+              fontSize: '0.82rem',
+              border: successData.action === 'CHECK_IN' ? '1px solid #a7f3d0' : '1px solid #bfdbfe',
+              textTransform: 'uppercase'
+            }}>
+              {successData.action === 'CHECK_IN' ? 'Time In (Check-In) Recorded' : 'Time Out (Check-Out) Recorded'}
+            </span>
+
+            <h4 style={{ margin: '14px 0 6px', color: '#111827', fontSize: '1.25rem', fontWeight: 800 }}>
+              {successData.message}
+            </h4>
+
+            <div style={{
+              background: '#f8fafc',
+              borderRadius: '10px',
+              padding: '14px',
+              margin: '16px 0',
+              border: '1px solid #e2e8f0',
+              textAlign: 'left',
+              fontSize: '0.85rem'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#6b7280' }}>Employee:</span>
+                <span style={{ fontWeight: 700 }}>{successData.employeeName || profile?.name}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#6b7280' }}>Staff ID:</span>
+                <span style={{ fontWeight: 700 }}>{successData.employeeCode || profile?.employeeId}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#6b7280' }}>Date:</span>
+                <span style={{ fontWeight: 600 }}>{formatDate(successData.date)}</span>
+              </div>
+              {successData.checkInTime && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span style={{ color: '#6b7280' }}>Check-In Time:</span>
+                  <span style={{ fontWeight: 800, color: '#047857' }}>{successData.checkInTime}</span>
+                </div>
+              )}
+              {successData.checkOutTime && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#6b7280' }}>Check-Out Time:</span>
+                  <span style={{ fontWeight: 800, color: '#d97706' }}>{successData.checkOutTime}</span>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                width: '100%',
+                padding: '12px',
+                background: '#047857',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '10px',
+                fontWeight: 700,
+                fontSize: '0.95rem',
+                cursor: 'pointer',
+                boxShadow: '0 2px 6px rgba(4, 120, 87, 0.25)',
+              }}
+            >
+              Done &amp; View Attendance Log
+            </button>
+          </div>
+        ) : (
+          <div>
+            {/* Mode Selector Tabs */}
+            <div style={{ display: 'flex', background: '#f3f4f6', padding: '4px', borderRadius: '10px', gap: '4px', marginBottom: '18px' }}>
+              <button
+                type="button"
+                onClick={() => { setMode('camera'); setErrorMsg(''); }}
+                style={{
+                  flex: 1,
+                  padding: '8px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: mode === 'camera' ? '#047857' : 'transparent',
+                  color: mode === 'camera' ? '#ffffff' : '#374151',
+                  fontWeight: 700,
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                }}
+              >
+                📷 Camera View
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMode('file'); setErrorMsg(''); }}
+                style={{
+                  flex: 1,
+                  padding: '8px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: mode === 'file' ? '#047857' : 'transparent',
+                  color: mode === 'file' ? '#ffffff' : '#374151',
+                  fontWeight: 700,
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                }}
+              >
+                📁 Upload Photo
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMode('manual'); setErrorMsg(''); }}
+                style={{
+                  flex: 1,
+                  padding: '8px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: mode === 'manual' ? '#047857' : 'transparent',
+                  color: mode === 'manual' ? '#ffffff' : '#374151',
+                  fontWeight: 700,
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                }}
+              >
+                ⌨️ Enter Code
+              </button>
+            </div>
+
+            {errorMsg && (
+              <div style={{ background: '#fef2f2', color: '#991b1b', padding: '10px 14px', borderRadius: '8px', border: '1px solid #fecaca', marginBottom: '14px', fontSize: '0.85rem', fontWeight: 600 }}>
+                {errorMsg}
+              </div>
+            )}
+
+            {/* Sub-view: Camera Scan */}
+            {mode === 'camera' && (
+              <div>
+                {cameraPermissionError ? (
+                  <div style={{ background: '#fffbeb', padding: '16px', borderRadius: '10px', border: '1px solid #fde68a', textAlign: 'center', marginBottom: '14px' }}>
+                    <div style={{ fontSize: '2rem', marginBottom: '6px' }}>📷</div>
+                    <div style={{ fontWeight: 700, color: '#92400e', fontSize: '0.88rem' }}>Camera Permission Required</div>
+                    <p style={{ fontSize: '0.8rem', color: '#78350f', margin: '6px 0 12px' }}>
+                      {cameraPermissionError}
+                    </p>
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => setMode('file')}
+                        style={{ padding: '7px 14px', background: '#047857', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        Upload QR Image
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMode('manual')}
+                        style={{ padding: '7px 14px', background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        Enter Code
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div
+                      id="worker-qr-reader-mount"
+                      style={{
+                        width: '100%',
+                        minHeight: '260px',
+                        background: '#000000',
+                        borderRadius: '12px',
+                        overflow: 'hidden',
+                        marginBottom: '12px',
+                      }}
+                    />
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                      <span style={{ fontSize: '0.78rem', color: '#6b7280' }}>
+                        Point camera directly at today's QR code.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'))}
+                        style={{
+                          padding: '6px 12px',
+                          background: '#f3f4f6',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          fontSize: '0.78rem',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        🔄 Switch Camera ({facingMode === 'environment' ? 'Rear' : 'Front'})
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sub-view: Upload Photo */}
+            {mode === 'file' && (
+              <div style={{ textAlign: 'center', padding: '24px 16px', border: '2px dashed #047857', borderRadius: '12px', background: '#f8fafc' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>📁</div>
+                <div style={{ fontWeight: 800, color: '#111827', fontSize: '0.95rem' }}>Upload Photo of Daily QR Code</div>
+                <p style={{ fontSize: '0.82rem', color: '#6b7280', margin: '4px 0 16px' }}>
+                  Select an image or take a photo of the daily QR code from your gallery or files.
+                </p>
+                <input
+                  type="file"
+                  id="qr-file-input"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  style={{ display: 'none' }}
+                />
+                <label
+                  htmlFor="qr-file-input"
+                  style={{
+                    display: 'inline-block',
+                    padding: '10px 24px',
+                    background: '#047857',
+                    color: '#ffffff',
+                    borderRadius: '8px',
+                    fontWeight: 700,
+                    fontSize: '0.88rem',
+                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 2px 4px rgba(4, 120, 87, 0.25)',
+                  }}
+                >
+                  {isSubmitting ? 'Scanning Image...' : 'Choose Image File'}
+                </label>
+              </div>
+            )}
+
+            {/* Sub-view: Manual Code */}
+            {mode === 'manual' && (
+              <form onSubmit={handleManualSubmit}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
+                    QR Code Token ID:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. ODL-ATT-20261019-XXXXXX"
+                    value={manualCode}
+                    onChange={(e) => setManualCode(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid #d1d5db',
+                      fontSize: '0.95rem',
+                      fontFamily: 'monospace',
+                    }}
+                  />
+                  <span style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '4px', display: 'block' }}>
+                    Ask your Employee Manager for today's token if you cannot scan the QR code.
+                  </span>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !manualCode.trim()}
+                  style={{
+                    width: '100%',
+                    padding: '11px',
+                    background: '#047857',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontWeight: 700,
+                    fontSize: '0.9rem',
+                    cursor: isSubmitting || !manualCode.trim() ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {isSubmitting ? 'Submitting...' : 'Mark Attendance with Code'}
+                </button>
+              </form>
+            )}
+
+            <div style={{ marginTop: '16px', textAlign: 'center', borderTop: '1px solid #f3f4f6', paddingTop: '12px' }}>
+              <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
+                Daily QR Code Attendance System • Odiliya Homes
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+

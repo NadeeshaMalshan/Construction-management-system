@@ -45,6 +45,9 @@ public class ProjectManagementService {
         return projectId == null ? taskRepository.findAll() : taskRepository.findByProjectId(projectId);
     }
     public ProjectTask createTask(ProjectTask task) {
+        if (task.getStatus() == null || task.getStatus().trim().isEmpty()) {
+            task.setStatus("TODO");
+        }
         task.setProject(project(task.getProject()));
         task.setAssignedEmployee(employee(task.getAssignedEmployee()));
         return taskRepository.save(task);
@@ -55,7 +58,9 @@ public class ProjectManagementService {
         task.setDescription(update.getDescription());
         task.setStartDate(update.getStartDate());
         task.setDeadline(update.getDeadline());
-        task.setStatus(update.getStatus());
+        if (update.getStatus() != null && !update.getStatus().trim().isEmpty()) {
+            task.setStatus(update.getStatus());
+        }
         task.setProgressPercentage(update.getProgressPercentage());
         task.setProgressRemarks(update.getProgressRemarks());
         if (update.getProject() != null && update.getProject().getId() != null) {

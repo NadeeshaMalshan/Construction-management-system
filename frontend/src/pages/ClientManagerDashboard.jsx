@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { useAuth } from '../context/AuthContext';
@@ -40,10 +40,12 @@ import {
   getBankDetails,
   updateBankDetails,
   linkInquiryContract,
+  markProjectRequestPaid,
+  markInquiryPaid,
   formatDate,
   formatMoney,
 } from '../services/api';
-import { downloadFile, exportCsv } from '../utils/documentDownload';
+import { downloadFile, exportCsv, downloadPaymentInvoice } from '../utils/documentDownload';
 
 const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -56,6 +58,14 @@ const readImageAsDataUrl = readFileAsDataUrl;
 const formatFileSize = (bytes) => bytes < 1024 * 1024
   ? `${Math.max(1, Math.round(bytes / 1024))} KB`
   : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+const getTodayDateString = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const calculateValidityDate = (dateStr) => {
   if (!dateStr) return '';
@@ -102,6 +112,8 @@ export default function ClientManagerDashboard() {
   const [downPayments, setDownPayments] = useState([]);
   const [projectRequests, setProjectRequests] = useState([]);
   const [projectRequestFilter, setProjectRequestFilter] = useState('ALL');
+  const [projectRequestClientFilter, setProjectRequestClientFilter] = useState('ALL');
+  const [projectRequestTypeFilter, setProjectRequestTypeFilter] = useState('ALL');
   const [forwardModalOpen, setForwardModalOpen] = useState(false);
   const [forwardTarget, setForwardTarget] = useState(null);
   const [forwardCmNotes, setForwardCmNotes] = useState('');
@@ -244,7 +256,9 @@ export default function ClientManagerDashboard() {
   });
   const [savingBankDetails, setSavingBankDetails] = useState(false);
 
-
+  const pmEvaluatedInquiries = useMemo(() => {
+    return inquiries.filter((inq) => inq.pmDecision === 'APPROVED' || inq.pmDecision === 'REJECTED');
+  }, [inquiries]);
 
   async function loadAllData() {
     setLoading(true);
@@ -414,6 +428,11 @@ export default function ClientManagerDashboard() {
 
   const handleSaveContract = async (e) => {
     e.preventDefault();
+    if (contractForm.endDate && contractForm.endDate < getTodayDateString()) {
+      setError('Contract End Date cannot be in the past. Please select today or a future date.');
+      setTimeout(() => setError(''), 4000);
+      return;
+    }
     try {
       const payload = {
         contractNumber: contractForm.contractNumber.trim(),
@@ -438,7 +457,7 @@ export default function ClientManagerDashboard() {
             console.warn('Could not link inquiry contract:', linkErr);
           }
         }
-        setSuccessMsg('New contract recorded & agreement prepared!');
+        setSuccessMsg('Contract signed & recorded successfully! Notification sent to Project Manager to create project.');
       }
       setContractLinkedInquiryId(null);
       setContractModalOpen(false);
@@ -705,21 +724,51 @@ export default function ClientManagerDashboard() {
     }
   };
 
-  const openAddPayment = (presetProject = null) => {
+  const openAddPayment = (presetProject = null, presetRequest = null, presetInquiry = null) => {
     setEditingPayment(null);
     setReceiptFile(null);
     const today = new Date().toISOString().slice(0, 10);
+    let cId = clients[0]?.id ? String(clients[0].id) : '';
+    let pId = '';
+    let rId = '';
+    let iId = '';
+    let totalAmt = '';
+    let amt = '';
+    let notes = '';
+
+    if (presetRequest) {
+      cId = presetRequest.client?.id ? String(presetRequest.client.id) : cId;
+      rId = String(presetRequest.id);
+      const bud = presetRequest.pmEstimatedBudget || presetRequest.expectedBudget || 0;
+      totalAmt = bud ? String(bud) : '';
+      amt = bud ? (Number(bud) * 0.2).toFixed(2) : '';
+      notes = `Initial 20% Down Payment for PM Approved Project Request #${presetRequest.id}: ${presetRequest.title}`;
+    } else if (presetInquiry) {
+      cId = presetInquiry.client?.id ? String(presetInquiry.client.id) : cId;
+      iId = String(presetInquiry.id);
+      const bud = presetInquiry.pmEstimatedBudget || presetInquiry.design?.budget || 0;
+      totalAmt = bud ? String(bud) : '';
+      amt = bud ? (Number(bud) * 0.2).toFixed(2) : '';
+      notes = `Initial 20% Down Payment for PM Approved Inquiry #${presetInquiry.id}: ${presetInquiry.subject}`;
+    } else if (presetProject) {
+      cId = presetProject.client?.id ? String(presetProject.client.id) : cId;
+      pId = String(presetProject.id);
+      totalAmt = presetProject.budget ? String(presetProject.budget) : '';
+    }
+
     setPaymentForm({
-      clientId: presetProject?.client?.id ? String(presetProject.client.id) : (clients[0]?.id ? String(clients[0].id) : ''),
-      projectId: presetProject?.id ? String(presetProject.id) : '',
-      amount: '',
+      clientId: cId,
+      projectId: pId,
+      projectRequestId: rId,
+      inquiryId: iId,
+      amount: amt,
       paymentDate: today,
       paymentMethod: 'CASH',
-      referenceNumber: '',
+      referenceNumber: `REC-${Date.now().toString().slice(-6)}`,
       status: 'Valid',
-      notes: '',
-      totalProjectAmount: presetProject?.budget ? String(presetProject.budget) : '',
-      requiredDownPayment: '',
+      notes: notes,
+      totalProjectAmount: totalAmt,
+      requiredDownPayment: amt,
       receipt: '',
       receiptFileName: '',
       receiptFileType: '',
@@ -733,6 +782,8 @@ export default function ClientManagerDashboard() {
     setPaymentForm({
       clientId: payment.client?.id ? String(payment.client.id) : '',
       projectId: payment.project?.id ? String(payment.project.id) : '',
+      projectRequestId: '',
+      inquiryId: '',
       amount: String(payment.amount || ''),
       paymentDate: payment.paymentDate ? formatDate(payment.paymentDate) : new Date().toISOString().slice(0, 10),
       paymentMethod: payment.paymentMethod || 'CASH',
@@ -781,6 +832,26 @@ export default function ClientManagerDashboard() {
         setSuccessMsg('Payment record updated successfully!');
       } else {
         await createDownPayment(payload);
+        if (paymentForm.projectRequestId) {
+          try {
+            await markProjectRequestPaid(Number(paymentForm.projectRequestId), {
+              amount: Number(paymentForm.amount),
+              refNumber: payload.referenceNumber,
+            });
+          } catch (pe) {
+            console.warn('Could not mark project request paid:', pe);
+          }
+        }
+        if (paymentForm.inquiryId) {
+          try {
+            await markInquiryPaid(Number(paymentForm.inquiryId), {
+              amount: Number(paymentForm.amount),
+              referenceNumber: payload.referenceNumber,
+            });
+          } catch (ie) {
+            console.warn('Could not mark inquiry down payment paid:', ie);
+          }
+        }
         setSuccessMsg('Down payment recorded successfully with 60-day validity!');
       }
       setPaymentModalOpen(false);
@@ -1011,26 +1082,10 @@ export default function ClientManagerDashboard() {
 
           <button
             type="button"
-            className={activeTab === 'inquiries' ? 'active' : ''}
-            onClick={() => setActiveTab('inquiries')}
-          >
-            Client Inquiries ({inquiries.filter((i) => i.pmDecision !== 'REJECTED').length})
-          </button>
-
-          <button
-            type="button"
             className={activeTab === 'project-requests' ? 'active' : ''}
             onClick={() => setActiveTab('project-requests')}
           >
-            Project Requests ({projectRequests.filter((r) => r.status === 'PENDING_CM_REVIEW' || r.status === 'PM_REVIEWED').length > 0 ? `${projectRequests.length} (${projectRequests.filter((r) => r.status === 'PENDING_CM_REVIEW' || r.status === 'PM_REVIEWED').length} Action)` : projectRequests.length})
-          </button>
-
-          <button
-            type="button"
-            className={activeTab === 'documents' ? 'active' : ''}
-            onClick={() => setActiveTab('documents')}
-          >
-            Document Vault ({documents.length})
+            Project Requests ({projectRequests.length})
           </button>
 
           <button
@@ -1039,6 +1094,14 @@ export default function ClientManagerDashboard() {
             onClick={() => setActiveTab('payments')}
           >
             Payments ({downPayments.length})
+          </button>
+
+          <button
+            type="button"
+            className={activeTab === 'inquiries' ? 'active' : ''}
+            onClick={() => setActiveTab('inquiries')}
+          >
+            Inquiries ({inquiries.length})
           </button>
 
           <button
@@ -1058,6 +1121,119 @@ export default function ClientManagerDashboard() {
         {successMsg && (
           <div className="pm-alert success">
             {successMsg}
+          </div>
+        )}
+
+        {/* PM Decision Notifications to Client Manager - SHOWN ONLY IN RELATED DASHBOARD (INQUIRIES) */}
+        {activeTab === 'inquiries' && pmEvaluatedInquiries.length > 0 && (
+          <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingBottom: '0.25rem' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                🔔 Project Manager Decision Updates ({pmEvaluatedInquiries.length})
+              </span>
+            </div>
+            {pmEvaluatedInquiries.map((inq) => {
+              const isApproved = inq.pmDecision === 'APPROVED';
+              const isContractSigned = inq.contractGenerated || inq.contractId;
+              const clientName = inq.client?.name || inq.clientName || 'Client';
+              const subjectText = inq.subject || inq.design?.name || `Inquiry #${inq.id}`;
+
+              return (
+                <div
+                  key={`pm-decision-notif-${inq.id}`}
+                  style={{
+                    padding: '1rem 1.25rem',
+                    borderRadius: '8px',
+                    border: isApproved ? '1.5px solid #10b981' : '1.5px solid #ef4444',
+                    background: isApproved ? '#f0fdf4' : '#fef2f2',
+                    boxShadow: '0 2px 5px rgba(0,0,0,0.05)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '1rem'
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: '280px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.35rem' }}>
+                      <span
+                        style={{
+                          background: isApproved ? '#059669' : '#dc2626',
+                          color: '#fff',
+                          fontSize: '0.75rem',
+                          fontWeight: 800,
+                          padding: '3px 8px',
+                          borderRadius: '4px',
+                          textTransform: 'uppercase'
+                        }}
+                      >
+                        PM Decision: {inq.pmDecision}
+                      </span>
+                      <span style={{ fontSize: '0.8rem', color: isApproved ? '#065f46' : '#991b1b', fontWeight: 600 }}>
+                        {inq.pmDecisionDate ? formatDate(inq.pmDecisionDate) : 'Recently Evaluated'}
+                      </span>
+                    </div>
+                    <div style={{ color: isApproved ? '#064e3b' : '#7f1d1d', fontWeight: 700, fontSize: '0.98rem' }}>
+                      {subjectText} — Client: {clientName}
+                    </div>
+                    {isApproved ? (
+                      <div style={{ marginTop: '0.35rem', fontSize: '0.88rem', color: '#047857', display: 'flex', gap: '1.25rem', flexWrap: 'wrap' }}>
+                        {inq.pmEstimatedBudget > 0 && <span><strong>Estimated Budget:</strong> {formatMoney(inq.pmEstimatedBudget)}</span>}
+                        {inq.pmEstimatedDuration && <span><strong>Timeline:</strong> {inq.pmEstimatedDuration}</span>}
+                        {inq.pmDecisionRemarks && <span><strong>PM Remarks:</strong> {inq.pmDecisionRemarks}</span>}
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: '0.35rem', fontSize: '0.88rem', color: '#b91c1c' }}>
+                        <strong>Rejection Reason:</strong> {inq.pmDecisionRemarks || 'Feasibility check rejected by Project Manager.'}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    {isApproved && (
+                      isContractSigned ? (
+                        <span
+                          style={{
+                            background: '#047857',
+                            color: '#fff',
+                            padding: '6px 14px',
+                            borderRadius: '6px',
+                            fontSize: '0.85rem',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px'
+                          }}
+                        >
+                          ✓ Contract Signed #{inq.contractId || ''} (Sent to PM)
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenContractModalFromInquiry(inq)}
+                          style={{
+                            background: '#047857',
+                            color: '#ffffff',
+                            border: 'none',
+                            padding: '8px 16px',
+                            borderRadius: '6px',
+                            fontWeight: 700,
+                            fontSize: '0.88rem',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 2px 4px rgba(4,120,87,0.2)'
+                          }}
+                        >
+                          ✍️ Sign Contract with Client →
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -1281,8 +1457,8 @@ export default function ClientManagerDashboard() {
                                 contractNumber: c.contractNumber || '',
                                 title: c.title || '',
                                 amount: String(c.amount || ''),
-                                signedDate: formatDate(c.signedDate),
-                                endDate: formatDate(c.endDate),
+                                signedDate: c.signedDate ? String(c.signedDate).slice(0, 10) : '',
+                                endDate: c.endDate ? String(c.endDate).slice(0, 10) : '',
                                 status: c.status || 'ACTIVE',
                                 terms: c.terms || '',
                                 clientId: c.client?.id ? String(c.client.id) : '',
@@ -1414,8 +1590,7 @@ export default function ClientManagerDashboard() {
 
         {/* TAB 6: INQUIRIES */}
         {activeTab === 'inquiries' && (() => {
-          // Exclude inquiries that were rejected by the Project Manager (not shown to Client Manager)
-          const cmVisibleInquiries = inquiries.filter((i) => i.pmDecision !== 'REJECTED');
+          const cmVisibleInquiries = inquiries;
           const clientScopedInquiries = inquiryClientFilter
             ? cmVisibleInquiries.filter((i) => String(i.client?.id) === String(inquiryClientFilter))
             : cmVisibleInquiries;
@@ -1600,7 +1775,7 @@ export default function ClientManagerDashboard() {
                             <div style={{ flex: '1 1 300px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                 <span style={{ background: '#059669', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', letterSpacing: '0.5px' }}>
-                                  ✓ PM FEASIBILITY APPROVED
+                                  PM FEASIBILITY APPROVED
                                 </span>
                                 <span style={{ fontSize: '0.82rem', color: '#065f46', fontWeight: 600 }}>
                                   Evaluated on {inq.pmDecisionDate ? formatDate(inq.pmDecisionDate) : 'Recently'}
@@ -1617,10 +1792,34 @@ export default function ClientManagerDashboard() {
                               )}
                             </div>
 
-                            <div>
+                            <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                              {!inq.downPaymentPaid && (
+                                <button
+                                  type="button"
+                                  style={{
+                                    background: '#16a34a',
+                                    color: '#ffffff',
+                                    border: 'none',
+                                    padding: '8px 16px',
+                                    borderRadius: '6px',
+                                    fontWeight: 700,
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 2px 4px rgba(22,163,74,0.2)'
+                                  }}
+                                  onClick={() => openAddPayment(null, null, inq)}
+                                >
+                                  💰 Record Down Payment (20%) →
+                                </button>
+                              )}
+                              {inq.downPaymentPaid && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#dcfce7', color: '#14532d', padding: '6px 12px', borderRadius: '6px', fontSize: '0.82rem', fontWeight: 700 }}>
+                                  ✓ Down Payment Paid {inq.downPaymentAmount ? `(${formatMoney(inq.downPaymentAmount)})` : ''}
+                                </span>
+                              )}
                               {inq.contractGenerated ? (
                                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#047857', color: '#fff', padding: '6px 14px', borderRadius: '6px', fontSize: '0.82rem', fontWeight: 700 }}>
-                                  ✓ Contract Agreement Active #{inq.contractId || ''}
+                                  Contract Agreement Active #{inq.contractId || ''}
                                 </div>
                               ) : (
                                 <button
@@ -1641,7 +1840,7 @@ export default function ClientManagerDashboard() {
                                     boxShadow: '0 2px 4px rgba(4,120,87,0.2)'
                                   }}
                                 >
-                                  📝 Generate &amp; Sign Contract Agreement with Client →
+                                  Generate &amp; Sign Contract Agreement with Client →
                                 </button>
                               )}
                             </div>
@@ -1656,7 +1855,7 @@ export default function ClientManagerDashboard() {
                           }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span style={{ background: '#dc2626', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
-                                ✕ PM FEASIBILITY REJECTED
+                                PM FEASIBILITY REJECTED
                               </span>
                               <span style={{ fontSize: '0.82rem', color: '#991b1b', fontWeight: 600 }}>
                                 Decided on {inq.pmDecisionDate ? formatDate(inq.pmDecisionDate) : 'Recently'}
@@ -1815,8 +2014,8 @@ export default function ClientManagerDashboard() {
           );
         })()}
 
-        {/* TAB 7: DOCUMENTS */}
-        {activeTab === 'documents' && (
+        {/* TAB 7: DOCUMENTS (REMOVED) */}
+        {false && activeTab === 'documents' && (
           <div>
             <div className="light-panel-card">
               <div className="panel-card-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
@@ -1909,26 +2108,150 @@ export default function ClientManagerDashboard() {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.25rem', marginTop: '1.25rem' }}>
                 {[
-                  { name: 'Odiliya_Master_Client_Sales_Contract.pdf', size: '520 KB', desc: 'Standard residential property purchase agreement' },
-                  { name: 'Odiliya_Deed_of_Transfer_and_Title_Clearance.pdf', size: '380 KB', desc: 'Conveyance deed and land registry certification' },
-                  { name: 'Odiliya_Payment_Plan_and_Installment_Agreement.pdf', size: '290 KB', desc: 'Milestone payment breakdown and penalty terms' },
-                  { name: 'Odiliya_Client_KYC_Verification_Form.pdf', size: '180 KB', desc: 'Mandatory client identity and source of funds declaration' },
+                  {
+                    title: 'Master Client Sales Contract',
+                    name: 'Odiliya_Master_Client_Sales_Contract.pdf',
+                    size: '520 KB',
+                    desc: 'Standard residential property purchase agreement with payment milestone schedules.',
+                    tag: 'Sales Agreement'
+                  },
+                  {
+                    title: 'Deed of Transfer & Title Clearance',
+                    name: 'Odiliya_Deed_of_Transfer_and_Title_Clearance.pdf',
+                    size: '380 KB',
+                    desc: 'Official conveyance deed and land registry title clearance documentation.',
+                    tag: 'Legal Deed'
+                  },
+                  {
+                    title: 'Payment Plan & Installment Agreement',
+                    name: 'Odiliya_Payment_Plan_and_Installment_Agreement.pdf',
+                    size: '290 KB',
+                    desc: 'Milestone payment breakdown, installment schedules, and penalty terms.',
+                    tag: 'Financing & Terms'
+                  },
+                  {
+                    title: 'Client KYC Verification Form',
+                    name: 'Odiliya_Client_KYC_Verification_Form.pdf',
+                    size: '180 KB',
+                    desc: 'Mandatory client identity verification and source of funds declaration.',
+                    tag: 'Compliance'
+                  },
                 ].map((doc) => (
-                  <div key={doc.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.85rem 1rem', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-                    <div style={{ flex: 1, marginRight: '0.5rem' }}>
-                      <strong style={{ fontSize: '0.85rem', color: '#0f172a', display: 'block' }}>{doc.name}</strong>
-                      <small style={{ color: '#64748b', fontSize: '0.75rem' }}>{doc.desc} • {doc.size}</small>
+                  <div
+                    key={doc.name}
+                    style={{
+                      background: '#ffffff',
+                      borderRadius: '12px',
+                      border: '1px solid #e2e8f0',
+                      padding: '1.25rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      gap: '1rem',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+                    }}
+                  >
+                    <div>
+                      {/* Top Header Row with PDF badge & Tag */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '0.75rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div
+                            style={{
+                              width: '36px',
+                              height: '36px',
+                              borderRadius: '8px',
+                              background: '#fee2e2',
+                              color: '#dc2626',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontWeight: 800,
+                              fontSize: '0.74rem',
+                              border: '1px solid #fecaca',
+                              flexShrink: 0,
+                            }}
+                          >
+                            PDF
+                          </div>
+                          <div>
+                            <strong style={{ fontSize: '0.98rem', color: '#0f172a', display: 'block', lineHeight: 1.3 }}>
+                              {doc.title}
+                            </strong>
+                            <small style={{ color: '#94a3b8', fontSize: '0.76rem', display: 'block' }}>
+                              {doc.name}
+                            </small>
+                          </div>
+                        </div>
+
+                        <span
+                          style={{
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            background: '#f1f5f9',
+                            color: '#475569',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {doc.tag}
+                        </span>
+                      </div>
+
+                      {/* Description */}
+                      <p style={{ margin: '0.35rem 0 0', color: '#475569', fontSize: '0.86rem', lineHeight: 1.45 }}>
+                        {doc.desc}
+                      </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => downloadFile(null, doc.name)}
-                      className="btn-outline-green"
-                      style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap' }}
+
+                    {/* Footer Row: File size & Download Button */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '10px',
+                        borderTop: '1px solid #f1f5f9',
+                        paddingTop: '0.75rem',
+                        marginTop: '0.25rem',
+                      }}
                     >
-                      Download
-                    </button>
+                      <span
+                        style={{
+                          fontSize: '0.78rem',
+                          color: '#64748b',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        {doc.size}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => downloadFile(null, doc.name)}
+                        className="btn-solid-green"
+                        style={{
+                          padding: '0.45rem 1rem',
+                          fontSize: '0.82rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          borderRadius: '8px',
+                          flexShrink: 0,
+                          boxShadow: '0 2px 4px rgba(4,120,87,0.2)',
+                        }}
+                      >
+                        Download Template
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2178,6 +2501,7 @@ export default function ClientManagerDashboard() {
                           <th>Method</th>
                           <th>Receipt</th>
                           <th>STATUS</th>
+                          <th>INVOICE</th>
                           <th>Actions</th>
                         </tr>
                       </thead>
@@ -2272,6 +2596,34 @@ export default function ClientManagerDashboard() {
                                 )}
                               </td>
                               <td>
+                                <button
+                                  type="button"
+                                  className="btn-solid-green"
+                                  style={{
+                                    padding: '0.32rem 0.75rem',
+                                    fontSize: '0.78rem',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.35rem',
+                                    whiteSpace: 'nowrap',
+                                    fontWeight: 700,
+                                    background: '#047857',
+                                    color: '#ffffff',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer'
+                                  }}
+                                  onClick={() => {
+                                    downloadPaymentInvoice(p, p.client, p.project);
+                                    setSuccessMsg(`Official Payment Invoice for ${p.referenceNumber || `PAY-${p.id}`} downloaded successfully.`);
+                                    setTimeout(() => setSuccessMsg(''), 4000);
+                                  }}
+                                  title="Download Official Client Payment Tax Invoice & Receipt (PDF)"
+                                >
+                                  Invoice (PDF)
+                                </button>
+                              </td>
+                              <td>
                                 <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', alignItems: 'center' }}>
                                   {!isCard ? (
                                     <>
@@ -2330,9 +2682,16 @@ export default function ClientManagerDashboard() {
             <div className="light-panel-card" style={{ marginBottom: '1.5rem' }}>
               <div className="panel-card-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
                 <div>
-                  <span className="brand-green-subtitle">CLIENT REQUEST INBOX</span>
-                  <h3 className="panel-title" style={{ margin: '0.2rem 0' }}>Client Custom Project Requests &amp; PM Workflows</h3>
-                  <p className="panel-meta" style={{ margin: 0 }}>Review custom project requests, forward to Project Manager for technical feasibility and estimates, and dispatch official proposals to clients.</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="brand-green-subtitle">CLIENT PROJECT REQUESTS</span>
+                    <span style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700 }}>
+                      VIEW-ONLY OVERSIGHT
+                    </span>
+                  </div>
+                  <h3 className="panel-title" style={{ margin: '0.2rem 0' }}>Client Project Requests &amp; Custom Designs (View Mode)</h3>
+                  <p className="panel-meta" style={{ margin: 0 }}>
+                    Monitor custom design submissions and company catalog requests. Technical reviews, cost estimates, approvals, and down payment requests are handled directly by the Project Manager.
+                  </p>
                 </div>
               </div>
 
@@ -2342,282 +2701,442 @@ export default function ClientManagerDashboard() {
                   <small style={{ color: 'var(--text-muted)' }}>Total Requests</small>
                   <strong style={{ fontSize: '1.4rem', display: 'block', color: '#0f172a' }}>{projectRequests.length}</strong>
                 </div>
+                <div style={{ background: '#fdf2f8', padding: '1rem', borderRadius: '8px', border: '1px solid #fbcfe8' }}>
+                  <small style={{ color: '#9d174d' }}>Client's Own Designs</small>
+                  <strong style={{ fontSize: '1.4rem', display: 'block', color: '#db2777' }}>
+                    {projectRequests.filter((r) => r.isCustomDesign || !r.selectedDesign).length}
+                  </strong>
+                </div>
                 <div style={{ background: '#fffbeb', padding: '1rem', borderRadius: '8px', border: '1px solid #fef3c7' }}>
-                  <small style={{ color: '#b45309' }}>Pending CM Review</small>
+                  <small style={{ color: '#b45309' }}>Under PM Review</small>
                   <strong style={{ fontSize: '1.4rem', display: 'block', color: '#d97706' }}>
-                    {projectRequests.filter((r) => r.status === 'PENDING_CM_REVIEW').length}
-                  </strong>
-                </div>
-                <div style={{ background: '#eff6ff', padding: '1rem', borderRadius: '8px', border: '1px solid #dbeafe' }}>
-                  <small style={{ color: '#1e40af' }}>Forwarded to PM</small>
-                  <strong style={{ fontSize: '1.4rem', display: 'block', color: '#2563eb' }}>
-                    {projectRequests.filter((r) => r.status === 'FORWARDED_TO_PM').length}
-                  </strong>
-                </div>
-                <div style={{ background: '#f5f3ff', padding: '1rem', borderRadius: '8px', border: '1px solid #ede9fe' }}>
-                  <small style={{ color: '#6d28d9' }}>PM Replied</small>
-                  <strong style={{ fontSize: '1.4rem', display: 'block', color: '#7c3aed' }}>
-                    {projectRequests.filter((r) => r.status === 'PM_REVIEWED').length}
+                    {projectRequests.filter((r) => r.status === 'PENDING_PM_REVIEW' || r.status === 'FORWARDED_TO_PM').length}
                   </strong>
                 </div>
                 <div style={{ background: '#f0fdf4', padding: '1rem', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
-                  <small style={{ color: '#15803d' }}>Approved</small>
-                  <strong style={{ fontSize: '1.4rem', display: 'block', color: '#16a34a' }}>
+                  <small style={{ color: '#15803d' }}>Approved by PM</small>
+                  <strong style={{ fontSize: '1.4rem', display: 'block', color: '#166534' }}>
                     {projectRequests.filter((r) => r.status === 'APPROVED' || r.status === 'PROJECT_STARTED').length}
                   </strong>
                 </div>
               </div>
 
-              {/* Status Filter Buttons */}
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1.25rem' }}>
+              {/* Request Type Selector Pills */}
+              <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid #e2e8f0' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', alignSelf: 'center', marginRight: '4px' }}>
+                  Category:
+                </span>
                 {[
-                  { key: 'ALL', label: 'All Requests' },
-                  { key: 'PENDING_CM_REVIEW', label: 'Pending CM Review' },
-                  { key: 'FORWARDED_TO_PM', label: 'Forwarded to PM' },
-                  { key: 'PM_REVIEWED', label: 'PM Replied' },
-                  { key: 'APPROVED', label: 'Approved' },
-                  { key: 'PROJECT_STARTED', label: 'Project Started' },
-                  { key: 'REJECTED', label: 'Rejected' },
-                  { key: 'CLIENT_NOTIFIED', label: 'Client Notified' },
-                ].map((f) => (
+                  { key: 'ALL', label: `All Requests (${projectRequests.length})` },
+                  { key: 'CUSTOM', label: `Client's Own Designs (${projectRequests.filter(r => r.isCustomDesign || !r.selectedDesign).length})` },
+                  { key: 'CATALOG', label: `Company Catalog (${projectRequests.filter(r => !r.isCustomDesign && r.selectedDesign).length})` },
+                ].map((t) => (
                   <button
-                    key={f.key}
+                    key={t.key}
                     type="button"
-                    onClick={() => setProjectRequestFilter(f.key)}
+                    onClick={() => setProjectRequestTypeFilter(t.key)}
                     style={{
-                      padding: '0.4rem 0.9rem',
-                      borderRadius: '16px',
-                      border: projectRequestFilter === f.key ? '2px solid var(--brand-green)' : '1px solid #cbd5e1',
-                      background: projectRequestFilter === f.key ? 'var(--brand-green)' : '#ffffff',
-                      color: projectRequestFilter === f.key ? '#ffffff' : '#334155',
-                      fontWeight: 600,
+                      padding: '0.4rem 1rem',
+                      borderRadius: '20px',
+                      border: projectRequestTypeFilter === t.key ? '2px solid var(--brand-green)' : '1px solid #cbd5e1',
+                      background: projectRequestTypeFilter === t.key ? 'var(--brand-green)' : '#ffffff',
+                      color: projectRequestTypeFilter === t.key ? '#ffffff' : '#334155',
+                      fontWeight: 700,
                       fontSize: '0.82rem',
                       cursor: 'pointer',
+                      transition: 'all 0.15s ease',
                     }}
                   >
-                    {f.label}
+                    {t.label}
                   </button>
                 ))}
               </div>
+
+              {/* Filters Bar: Client Selector + Status Chips */}
+              <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: '1rem' }}>
+                <div style={{ minWidth: '240px' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                    View by Client:
+                  </label>
+                  <select
+                    value={projectRequestClientFilter}
+                    onChange={(e) => setProjectRequestClientFilter(e.target.value)}
+                    style={{ width: '100%', padding: '0.5rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.88rem', background: '#fff' }}
+                  >
+                    <option value="ALL">All Clients ({projectRequests.length} requests)</option>
+                    {clients
+                      .filter((c) => projectRequests.some((r) => r.client?.id === c.id))
+                      .map((c) => {
+                        const count = projectRequests.filter((r) => r.client?.id === c.id).length;
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({count} {count === 1 ? 'request' : 'requests'})
+                          </option>
+                        );
+                      })}
+                  </select>
+                </div>
+
+                <div style={{ flex: 1, minWidth: '280px' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                    Filter by Status:
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                    {[
+                      { key: 'ALL', label: 'All' },
+                      { key: 'PENDING', label: 'Under Review' },
+                      { key: 'APPROVED', label: 'Approved by PM' },
+                      { key: 'PROJECT_STARTED', label: 'Started' },
+                      { key: 'REJECTED', label: 'Rejected by PM' },
+                    ].map((f) => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => setProjectRequestFilter(f.key)}
+                        style={{
+                          padding: '0.35rem 0.8rem',
+                          borderRadius: '16px',
+                          border: projectRequestFilter === f.key ? '2px solid var(--brand-green)' : '1px solid #cbd5e1',
+                          background: projectRequestFilter === f.key ? 'var(--brand-green)' : '#ffffff',
+                          color: projectRequestFilter === f.key ? '#ffffff' : '#334155',
+                          fontWeight: 600,
+                          fontSize: '0.8rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* Requests List */}
+            {/* Requests Grouped by Client (Read-Only, No Action Buttons) */}
             {(() => {
               const filteredList = projectRequests.filter((r) => {
-                if (projectRequestFilter === 'ALL') return true;
-                return r.status === projectRequestFilter;
+                const isCustom = r.isCustomDesign || !r.selectedDesign;
+                if (projectRequestTypeFilter === 'CUSTOM' && !isCustom) return false;
+                if (projectRequestTypeFilter === 'CATALOG' && isCustom) return false;
+                if (projectRequestFilter !== 'ALL') {
+                  if (projectRequestFilter === 'PENDING') {
+                    if (r.status !== 'PENDING_PM_REVIEW' && r.status !== 'PENDING_CM_REVIEW' && r.status !== 'FORWARDED_TO_PM') return false;
+                  } else if (r.status !== projectRequestFilter) {
+                    return false;
+                  }
+                }
+                if (projectRequestClientFilter !== 'ALL') {
+                  const cId = r.client?.id ? String(r.client.id) : '';
+                  if (cId !== String(projectRequestClientFilter)) return false;
+                }
+                return true;
               });
 
               if (filteredList.length === 0) {
                 return (
                   <div className="light-panel-card" style={{ textAlign: 'center', padding: '3rem' }}>
-                    
                     <h4>No Project Requests found in this filter</h4>
                     <p className="text-muted">Requests submitted by clients from their portal will show up here.</p>
                   </div>
                 );
               }
 
+              // Group by client
+              const clientGroups = Object.values(
+                filteredList.reduce((acc, req) => {
+                  const clientId = req.client?.id || `unassigned-${req.client?.email || 'anon'}`;
+                  if (!acc[clientId]) {
+                    acc[clientId] = {
+                      client: req.client,
+                      requests: [],
+                    };
+                  }
+                  acc[clientId].requests.push(req);
+                  return acc;
+                }, {})
+              );
+
               return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                  {filteredList.map((req) => {
-                    const isPendingCm = req.status === 'PENDING_CM_REVIEW';
-                    const isForwardedPm = req.status === 'FORWARDED_TO_PM';
-                    const isPmReviewed = req.status === 'PM_REVIEWED';
-                    const isClientNotified = req.status === 'CLIENT_NOTIFIED';
-                    const isApproved = req.status === 'APPROVED';
-                    const isRejected = req.status === 'REJECTED';
-                    const isStarted = req.status === 'PROJECT_STARTED';
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                  {clientGroups.map((group, gIdx) => {
+                    const client = group.client || {};
+                    const clientInitial = (client.name || 'C').charAt(0).toUpperCase();
 
                     return (
                       <div
-                        key={req.id}
-                        className="light-panel-card"
+                        key={client.id || gIdx}
                         style={{
-                          borderLeft: isStarted
-                            ? '5px solid #10b981'
-                            : isApproved
-                            ? '5px solid #16a34a'
-                            : isRejected
-                            ? '5px solid #ef4444'
-                            : isPmReviewed
-                            ? '5px solid #7c3aed'
-                            : isPendingCm
-                            ? '5px solid #d97706'
-                            : isForwardedPm
-                            ? '5px solid #2563eb'
-                            : '5px solid #16a34a',
+                          background: '#ffffff',
+                          borderRadius: '12px',
+                          border: '1.5px solid #e2e8f0',
+                          boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+                          overflow: 'hidden',
                         }}
                       >
-                        {/* Header Row */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
-                          <div>
-                            <span className="brand-green-subtitle" style={{ fontSize: '0.8rem' }}>
-                              {req.category} &nbsp;•&nbsp; Client: <strong>{req.client?.name || 'Client'}</strong> ({req.client?.email || 'N/A'}, {req.client?.phone || 'N/A'})
-                            </span>
-                            <h3 style={{ margin: '0.2rem 0', color: '#0f172a' }}>{req.title}</h3>
-                            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                              {req.location || 'Location not specified'} &nbsp;|&nbsp; Submitted on {formatDate(req.createdAt)}
-                            </p>
-                          </div>
-                          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                            {isPendingCm && <span className="pill-badge warning">Pending CM Review</span>}
-                            {isForwardedPm && <span className="pill-badge active">Forwarded to PM</span>}
-                            {isPmReviewed && <span className="pill-badge active" style={{ background: '#ede9fe', color: '#6d28d9', fontWeight: 700 }}>PM Assessment Complete</span>}
-                            {isClientNotified && <span className="pill-badge completed">Client Notified</span>}
-                            {isApproved && <span className="pill-badge completed" style={{ background: '#dcfce7', color: '#166534', fontWeight: 700 }}>Approved (Awaiting PM to Start)</span>}
-                            {isStarted && <span className="pill-badge completed" style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #10b981', fontWeight: 700 }}>Project Started</span>}
-                            {isRejected && <span className="pill-badge error" style={{ background: '#fee2e2', color: '#b91c1c', fontWeight: 700 }}>Rejected</span>}
-                          </div>
-                        </div>
-
-                        {/* Specs & Budget Grid */}
-                        <div style={{ display: 'flex', gap: '1.5rem', margin: '1rem 0', flexWrap: 'wrap', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px' }}>
-                          <div>
-                            <small style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.78rem' }}>Client Expected Budget</small>
-                            <strong style={{ color: 'var(--brand-green)', fontSize: '1.05rem' }}>{req.expectedBudget ? formatMoney(req.expectedBudget) : 'Custom Quote'}</strong>
-                          </div>
-                          {req.targetStartDate && (
+                        {/* Client Group Header Banner */}
+                        <div
+                          style={{
+                            background: '#f8fafc',
+                            borderBottom: '1.5px solid #e2e8f0',
+                            padding: '1rem 1.25rem',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: '0.75rem',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                            <div
+                              style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                background: '#047857',
+                                color: '#ffffff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontWeight: 800,
+                                fontSize: '1.1rem',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {clientInitial}
+                            </div>
                             <div>
-                              <small style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.78rem' }}>Target Start Date</small>
-                              <strong style={{ color: '#0f172a' }}>{formatDate(req.targetStartDate)}</strong>
+                              <h4 style={{ margin: 0, color: '#0f172a', fontSize: '1.1rem', fontWeight: 700 }}>
+                                {client.name || 'Registered Client'}
+                              </h4>
+                              <div style={{ fontSize: '0.82rem', color: '#64748b', marginTop: '2px', display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
+                                {client.email && <span>{client.email}</span>}
+                                {client.phone && <span>{client.phone}</span>}
+                                {client.address && <span>{client.address}</span>}
+                              </div>
                             </div>
-                          )}
-                          {req.specifications && (
-                            <div style={{ flex: 1, minWidth: '200px' }}>
-                              <small style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.78rem' }}>Client Specifications</small>
-                              <span style={{ color: '#334155', fontSize: '0.9rem' }}>{req.specifications}</span>
-                            </div>
-                          )}
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span
+                              style={{
+                                background: '#ecfdf5',
+                                color: '#047857',
+                                border: '1px solid #a7f3d0',
+                                padding: '4px 12px',
+                                borderRadius: '16px',
+                                fontWeight: 700,
+                                fontSize: '0.82rem',
+                              }}
+                            >
+                              {group.requests.length} {group.requests.length === 1 ? 'Project Request' : 'Project Requests'}
+                            </span>
+                          </div>
                         </div>
 
-                        <p style={{ margin: '0.5rem 0', color: '#334155', fontSize: '0.92rem', lineHeight: 1.5 }}>
-                          <strong>Requirements:</strong> {req.description}
-                        </p>
+                        {/* Requests belonging to this Client */}
+                        <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                          {group.requests.map((req) => {
+                            const isCustom = req.isCustomDesign || !req.selectedDesign;
+                            const isPendingPm = req.status === 'PENDING_PM_REVIEW';
+                            const isPendingCm = req.status === 'PENDING_CM_REVIEW';
+                            const isForwardedPm = req.status === 'FORWARDED_TO_PM';
+                            const isPmReviewed = req.status === 'PM_REVIEWED';
+                            const isClientNotified = req.status === 'CLIENT_NOTIFIED';
+                            const isApproved = req.status === 'APPROVED';
+                            const isRejected = req.status === 'REJECTED';
+                            const isStarted = req.status === 'PROJECT_STARTED';
 
-                        {/* Attached Photos */}
-                        {req.imageUrls && req.imageUrls.length > 0 && (
-                          <div style={{ margin: '0.75rem 0', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                            <small style={{ color: 'var(--text-muted)', marginRight: '0.25rem' }}>Client Photos / Blueprints ({req.imageUrls.length}):</small>
-                            {req.imageUrls.map((img, idx) => (
-                              <img
-                                key={idx}
-                                src={img}
-                                alt={`Attachment ${idx + 1}`}
-                                style={{ width: '65px', height: '55px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #cbd5e1', cursor: 'pointer' }}
-                                onClick={() => setPreviewRequestPhotosModal(req)}
-                              />
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Forwarding history note */}
-                        {req.cmNotes && (
-                          <div style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', background: '#eff6ff', borderLeft: '3px solid #3b82f6', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#1d4ed8' }}>Forwarded to PM ({req.forwardedByCm || 'CM'} on {formatDate(req.forwardedToPmAt)}):</strong>
-                            <p style={{ margin: '0.2rem 0 0', color: '#1e3a8a' }}>{req.cmNotes}</p>
-                          </div>
-                        )}
-
-                        {/* PM Technical Assessment */}
-                        {req.pmReply && (
-                          <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#f5f3ff', borderLeft: '3px solid #7c3aed', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem', flexWrap: 'wrap' }}>
-                              <strong style={{ color: '#6d28d9' }}>Project Manager Engineering Review ({req.pmRespondedBy || 'PM'} on {formatDate(req.pmRespondedAt)}):</strong>
-                              {req.pmEstimatedBudget && (
-                                <span style={{ color: '#6d28d9', fontWeight: 700 }}>
-                                  Estimated: {formatMoney(req.pmEstimatedBudget)} {req.pmEstimatedDuration ? `| ${req.pmEstimatedDuration}` : ''}
-                                </span>
-                              )}
-                            </div>
-                            <p style={{ margin: '0.25rem 0 0', color: '#4c1d95', whiteSpace: 'pre-wrap' }}>{req.pmReply}</p>
-                          </div>
-                        )}
-
-                        {/* Rejection reason if rejected */}
-                        {req.rejectionReason && (
-                          <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#fef2f2', borderLeft: '3px solid #ef4444', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#b91c1c' }}>Rejection Reason (by {req.rejectedBy || 'Client Manager'} on {formatDate(req.rejectedAt)}):</strong>
-                            <p style={{ margin: '0.2rem 0 0', color: '#7f1d1d' }}>{req.rejectionReason}</p>
-                          </div>
-                        )}
-
-                        {/* Approved notice */}
-                        {isApproved && (
-                          <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#f0fdf4', borderLeft: '3px solid #16a34a', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#15803d' }}>Approved by {req.approvedBy || 'Client Manager'} on {formatDate(req.approvedAt)}</strong>
-                            <p style={{ margin: '0.2rem 0 0', color: '#166534' }}>Awaiting Project Manager to initialize and assign client to the new construction project.</p>
-                          </div>
-                        )}
-
-                        {/* Project started notice */}
-                        {isStarted && (
-                          <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#ecfdf5', borderLeft: '3px solid #10b981', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#047857' }}>Project Initialized by Project Manager (Project ID #{req.startedProjectId})</strong>
-                            <p style={{ margin: '0.2rem 0 0', color: '#065f46' }}>Construction project is underway and client is assigned.</p>
-                          </div>
-                        )}
-
-                        {/* Official Response sent to client */}
-                        {req.clientMessage && (
-                          <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#f0fdf4', borderLeft: '3px solid #16a34a', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem', flexWrap: 'wrap' }}>
-                              <strong style={{ color: '#15803d' }}>Official Message Delivered to Client on {formatDate(req.clientNotifiedAt)}:</strong>
-                              <small style={{ color: 'var(--text-muted)' }}>By {req.clientNotifiedBy || 'Client Manager'}</small>
-                            </div>
-                            <p style={{ margin: '0.25rem 0 0', color: '#14532d', whiteSpace: 'pre-wrap' }}>{req.clientMessage}</p>
-                          </div>
-                        )}
-
-                        {/* Action buttons */}
-                        <div style={{ marginTop: '1.25rem', display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap', borderTop: '1px solid #f1f5f9', paddingTop: '0.85rem' }}>
-                          {!isApproved && !isStarted && !isRejected && (
-                            <>
-                              <button
-                                type="button"
-                                className="btn-solid-green"
-                                style={{ padding: '0.45rem 1rem', fontSize: '0.85rem', background: '#16a34a' }}
-                                onClick={() => handleOpenApproveModal(req)}
+                            return (
+                              <div
+                                key={req.id}
+                                style={{
+                                  background: '#ffffff',
+                                  borderRadius: '10px',
+                                  border: '1px solid #e2e8f0',
+                                  borderLeft: isStarted
+                                    ? '5px solid #10b981'
+                                    : isApproved
+                                    ? '5px solid #16a34a'
+                                    : isRejected
+                                    ? '5px solid #ef4444'
+                                    : isPmReviewed
+                                    ? '5px solid #7c3aed'
+                                    : isPendingPm
+                                    ? '5px solid #8b5cf6'
+                                    : isPendingCm
+                                    ? '5px solid #d97706'
+                                    : isForwardedPm
+                                    ? '5px solid #2563eb'
+                                    : '5px solid #16a34a',
+                                  padding: '1.25rem',
+                                }}
                               >
-                                Approve Request
-                              </button>
-                              <button
-                                type="button"
-                                className="btn-outline-green"
-                                style={{ padding: '0.45rem 0.85rem', fontSize: '0.85rem', borderColor: '#ef4444', color: '#ef4444' }}
-                                onClick={() => handleOpenRejectModal(req)}
-                              >
-                                Reject Request
-                              </button>
-                            </>
-                          )}
+                                {/* Request Header */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                  <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                                      <span className="brand-green-subtitle" style={{ fontSize: '0.8rem' }}>
+                                        {req.category} &nbsp;•&nbsp; Request #{req.id}
+                                      </span>
+                                      {isCustom ? (
+                                        <span style={{ background: '#f5f3ff', color: '#6d28d9', border: '1px solid #ddd6fe', padding: '2px 8px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 800 }}>
+                                          Client's Own Custom Design
+                                        </span>
+                                      ) : (
+                                        <span style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '2px 8px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 700 }}>
+                                          Company Catalog Design
+                                        </span>
+                                      )}
+                                    </div>
+                                    <h3 style={{ margin: '0.2rem 0', color: '#0f172a', fontSize: '1.15rem' }}>{req.title}</h3>
+                                    <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                                      {req.location || 'Location not specified'} &nbsp;|&nbsp; Submitted on {formatDate(req.createdAt)}
+                                    </p>
+                                  </div>
 
-                          <button
-                            type="button"
-                            className="btn-outline-green"
-                            style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
-                            onClick={() => handleOpenForwardModal(req)}
-                          >
-                            {req.status === 'FORWARDED_TO_PM' ? 'Update Forward to PM' : 'Forward to PM →'}
-                          </button>
+                                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                                    {isPendingPm && <span className="pill-badge active" style={{ background: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe', fontWeight: 700 }}>Awaiting PM Review &amp; Approval</span>}
+                                    {isPendingCm && <span className="pill-badge warning">Pending CM Review</span>}
+                                    {isForwardedPm && <span className="pill-badge active" style={{ background: '#dbeafe', color: '#1d4ed8' }}>Forwarded to PM</span>}
+                                    {isPmReviewed && <span className="pill-badge active" style={{ background: '#ede9fe', color: '#6d28d9', fontWeight: 700 }}>PM Assessment Complete</span>}
+                                    {isClientNotified && <span className="pill-badge completed">Client Notified</span>}
+                                    {isApproved && <span className="pill-badge completed" style={{ background: '#dcfce7', color: '#166534', fontWeight: 700 }}>Approved by PM</span>}
+                                    {isStarted && <span className="pill-badge completed" style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #10b981', fontWeight: 700 }}>Project Underway</span>}
+                                    {isRejected && <span className="pill-badge error" style={{ background: '#fee2e2', color: '#b91c1c', fontWeight: 700 }}>Rejected by PM</span>}
+                                  </div>
+                                </div>
 
-                          <button
-                            type="button"
-                            className="btn-outline-green"
-                            style={{ padding: '0.45rem 1rem', fontSize: '0.85rem' }}
-                            onClick={() => handleOpenClientNotifyModal(req)}
-                          >
-                            {req.status === 'CLIENT_NOTIFIED' ? 'Update Client Response' : 'Send Response'}
-                          </button>
+                                {/* Specs & Budget Grid */}
+                                <div style={{ display: 'flex', gap: '1.5rem', margin: '1rem 0', flexWrap: 'wrap', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px' }}>
+                                  <div>
+                                    <small style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.78rem' }}>Client Expected Budget</small>
+                                    <strong style={{ color: 'var(--brand-green)', fontSize: '1.05rem' }}>{req.expectedBudget ? formatMoney(req.expectedBudget) : 'Custom Quote'}</strong>
+                                  </div>
+                                  {req.targetStartDate && (
+                                    <div>
+                                      <small style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.78rem' }}>Target Start Date</small>
+                                      <strong style={{ color: '#0f172a' }}>{formatDate(req.targetStartDate)}</strong>
+                                    </div>
+                                  )}
+                                  {req.specifications && (
+                                    <div style={{ flex: 1, minWidth: '200px' }}>
+                                      <small style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.78rem' }}>Client Specifications</small>
+                                      <span style={{ color: '#334155', fontSize: '0.9rem' }}>{req.specifications}</span>
+                                    </div>
+                                  )}
+                                </div>
 
-                          <button
-                            type="button"
-                            className="btn-outline-green"
-                            style={{ padding: '0.45rem 0.75rem', fontSize: '0.85rem', borderColor: '#ef4444', color: '#ef4444' }}
-                            onClick={() => handleDeleteProjectRequest(req)}
-                          >
-                            Delete
-                          </button>
+                                <p style={{ margin: '0.5rem 0', color: '#334155', fontSize: '0.92rem', lineHeight: 1.5 }}>
+                                  <strong>Requirements:</strong> {req.description}
+                                </p>
+
+                                {/* Attached Photos / Drawings */}
+                                {req.imageUrls && req.imageUrls.length > 0 && (
+                                  <div style={{ margin: '0.75rem 0', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                    <small style={{ color: 'var(--text-muted)', marginRight: '0.25rem' }}>Client Photos / Blueprints ({req.imageUrls.length}):</small>
+                                    {req.imageUrls.map((img, idx) => (
+                                      <img
+                                        key={idx}
+                                        src={img}
+                                        alt={`Attachment ${idx + 1}`}
+                                        style={{ width: '65px', height: '55px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #cbd5e1', cursor: 'pointer' }}
+                                        onClick={() => setPreviewRequestPhotosModal(req)}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* PM Technical Assessment (if available) */}
+                                {req.pmReply && (
+                                  <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#f5f3ff', borderLeft: '3px solid #7c3aed', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem', flexWrap: 'wrap' }}>
+                                      <strong style={{ color: '#6d28d9' }}>Project Manager Engineering Assessment ({req.pmRespondedBy || 'PM'} on {formatDate(req.pmRespondedAt)}):</strong>
+                                      {req.pmEstimatedBudget && (
+                                        <span style={{ color: '#6d28d9', fontWeight: 700 }}>
+                                          Estimated: {formatMoney(req.pmEstimatedBudget)} {req.pmEstimatedDuration ? `| ${req.pmEstimatedDuration}` : ''}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p style={{ margin: '0.25rem 0 0', color: '#4c1d95', whiteSpace: 'pre-wrap' }}>{req.pmReply}</p>
+                                  </div>
+                                )}
+
+                                {/* PM Decision: Approved notice with financial estimation & down payment instruction */}
+                                {isApproved && (
+                                  <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#f0fdf4', borderLeft: '4px solid #16a34a', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                      <strong style={{ color: '#15803d', fontSize: '0.95rem' }}>
+                                        PM Approved {req.approvedBy ? `by ${req.approvedBy}` : ''} {req.approvedAt ? `on ${formatDate(req.approvedAt)}` : ''}
+                                      </strong>
+                                      {req.pmEstimatedBudget && (
+                                        <span style={{ background: '#dcfce7', color: '#166534', fontWeight: 700, padding: '2px 8px', borderRadius: '4px' }}>
+                                          PM Budget: {formatMoney(req.pmEstimatedBudget)} {req.pmEstimatedDuration ? `• ${req.pmEstimatedDuration}` : ''}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p style={{ margin: '0.3rem 0 0', color: '#166534' }}>
+                                      Technical feasibility confirmed. Client has been instructed to proceed with the 20% down payment.
+                                    </p>
+                                    {!req.downPaymentPaid && !isStarted && (
+                                      <div style={{ marginTop: '0.65rem' }}>
+                                        <button
+                                          type="button"
+                                          className="btn-solid-green"
+                                          style={{ fontSize: '0.82rem', padding: '0.4rem 1rem', background: '#16a34a' }}
+                                          onClick={() => openAddPayment(null, req, null)}
+                                        >
+                                          💰 Record Client Down Payment (20%) →
+                                        </button>
+                                      </div>
+                                    )}
+                                    {req.downPaymentPaid && (
+                                      <div style={{ marginTop: '0.5rem', display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#dcfce7', color: '#14532d', padding: '4px 10px', borderRadius: '4px', fontSize: '0.82rem', fontWeight: 700 }}>
+                                        ✓ 20% Down Payment Received {req.downPaymentAmount ? `(${formatMoney(req.downPaymentAmount)})` : ''}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* PM Decision: Rejection reason if rejected */}
+                                {isRejected && (
+                                  <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#fef2f2', borderLeft: '4px solid #ef4444', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
+                                    <strong style={{ color: '#b91c1c', fontSize: '0.95rem' }}>
+                                      Rejected {req.rejectedBy ? `by ${req.rejectedBy}` : 'by Project Manager'} {req.rejectedAt ? `on ${formatDate(req.rejectedAt)}` : ''}
+                                    </strong>
+                                    <p style={{ margin: '0.25rem 0 0', color: '#7f1d1d' }}>
+                                      <strong>Reason:</strong> {req.rejectionReason || 'No specific rejection note provided.'}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {/* Project started notice */}
+                                {isStarted && (
+                                  <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#ecfdf5', borderLeft: '3px solid #10b981', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
+                                    <strong style={{ color: '#047857' }}>Project Initialized by Project Manager (Project ID #{req.startedProjectId})</strong>
+                                    <p style={{ margin: '0.2rem 0 0', color: '#065f46' }}>Construction is underway and client is assigned.</p>
+                                  </div>
+                                )}
+
+                                {/* Official Response / Down Payment Instructions delivered to client */}
+                                {req.clientMessage && (
+                                  <div style={{ marginTop: '0.75rem', padding: '0.85rem 1rem', background: '#eff6ff', borderLeft: '4px solid #3b82f6', borderRadius: '0 6px 6px 0', fontSize: '0.88rem' }}>
+                                    <strong style={{ color: '#1d4ed8' }}>Delivered Client Notice &amp; Down Payment Instruction:</strong>
+                                    <p style={{ margin: '0.25rem 0 0', color: '#1e40af', whiteSpace: 'pre-wrap' }}>{req.clientMessage}</p>
+                                  </div>
+                                )}
+
+                                {/* Read-Only Oversight Footer (No action buttons for Client Manager) */}
+                                <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                  <span style={{ fontSize: '0.8rem', color: '#64748b', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                                    <strong>Read-Only Oversight</strong> — Client Manager View Mode
+                                  </span>
+                                  <span style={{ fontSize: '0.78rem', color: isCustom ? '#6d28d9' : '#0369a1', background: isCustom ? '#f5f3ff' : '#f0f9ff', border: isCustom ? '1px solid #ddd6fe' : '1px solid #bae6fd', padding: '3px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                                    {isCustom ? 'Custom design review & approvals are handled by Project Manager' : 'Technical feasibility & project actions handled by Project Manager'}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -2786,11 +3305,21 @@ export default function ClientManagerDashboard() {
                     </div>
                     <div className="form-input-box">
                       <label>Signed Date *</label>
-                      <input type="date" value={contractForm.signedDate} onChange={(e) => setContractForm({ ...contractForm, signedDate: e.target.value })} required />
+                      <input
+                        type="date"
+                        value={contractForm.signedDate}
+                        onChange={(e) => setContractForm({ ...contractForm, signedDate: e.target.value })}
+                        required
+                      />
                     </div>
                     <div className="form-input-box">
                       <label>End Date</label>
-                      <input type="date" value={contractForm.endDate} onChange={(e) => setContractForm({ ...contractForm, endDate: e.target.value })} />
+                      <input
+                        type="date"
+                        min={getTodayDateString()}
+                        value={contractForm.endDate}
+                        onChange={(e) => setContractForm({ ...contractForm, endDate: e.target.value })}
+                      />
                     </div>
                   </div>
                   <div className="form-input-box" style={{ marginTop: '1rem' }}>
@@ -3049,7 +3578,12 @@ export default function ClientManagerDashboard() {
                   <div className="form-grid-2" style={{ marginTop: '1rem' }}>
                     <div className="form-input-box">
                       <label>Target Date</label>
-                      <input type="date" value={milestoneForm.targetDate} onChange={(e) => setMilestoneForm({ ...milestoneForm, targetDate: e.target.value })} />
+                      <input
+                        type="date"
+                        min={getTodayDateString()}
+                        value={milestoneForm.targetDate}
+                        onChange={(e) => setMilestoneForm({ ...milestoneForm, targetDate: e.target.value })}
+                      />
                     </div>
                     <div className="form-input-box">
                       <label>Status</label>
@@ -3309,29 +3843,100 @@ export default function ClientManagerDashboard() {
                     </div>
 
                     <div className="form-input-box">
-                      <label>Project</label>
+                      <label>Project / Approved Request *</label>
                       <select
-                        value={paymentForm.projectId}
+                        value={
+                          paymentForm.projectRequestId
+                            ? `REQ-${paymentForm.projectRequestId}`
+                            : paymentForm.inquiryId
+                            ? `INQ-${paymentForm.inquiryId}`
+                            : paymentForm.projectId
+                            ? `PROJ-${paymentForm.projectId}`
+                            : ''
+                        }
                         onChange={(e) => {
-                          const pid = e.target.value;
-                          const projectList = (realProjects && realProjects.length > 0) ? realProjects : projects;
-                          const proj = projectList.find(p => p.id === Number(pid));
-                          setPaymentForm({
-                            ...paymentForm,
-                            projectId: pid,
-                            totalProjectAmount: proj?.budget ? String(proj.budget) : paymentForm.totalProjectAmount,
-                            clientId: proj?.client?.id ? String(proj.client.id) : paymentForm.clientId,
-                          });
+                          const val = e.target.value;
+                          if (val.startsWith('REQ-')) {
+                            const rId = Number(val.replace('REQ-', ''));
+                            const req = projectRequests.find(r => r.id === rId);
+                            const bud = req?.pmEstimatedBudget || req?.expectedBudget || 0;
+                            const dp = bud ? (Number(bud) * 0.2).toFixed(2) : '';
+                            setPaymentForm({
+                              ...paymentForm,
+                              projectRequestId: String(rId),
+                              inquiryId: '',
+                              projectId: '',
+                              clientId: req?.client?.id ? String(req.client.id) : paymentForm.clientId,
+                              totalProjectAmount: bud ? String(bud) : paymentForm.totalProjectAmount,
+                              amount: dp || paymentForm.amount,
+                              requiredDownPayment: dp,
+                              notes: `Initial 20% Down Payment for PM Approved Project Request #${rId}: ${req?.title || ''}`,
+                            });
+                          } else if (val.startsWith('INQ-')) {
+                            const iId = Number(val.replace('INQ-', ''));
+                            const inq = inquiries.find(i => i.id === iId);
+                            const bud = inq?.pmEstimatedBudget || inq?.design?.budget || 0;
+                            const dp = bud ? (Number(bud) * 0.2).toFixed(2) : '';
+                            setPaymentForm({
+                              ...paymentForm,
+                              inquiryId: String(iId),
+                              projectRequestId: '',
+                              projectId: '',
+                              clientId: inq?.client?.id ? String(inq.client.id) : paymentForm.clientId,
+                              totalProjectAmount: bud ? String(bud) : paymentForm.totalProjectAmount,
+                              amount: dp || paymentForm.amount,
+                              requiredDownPayment: dp,
+                              notes: `Initial 20% Down Payment for PM Approved Inquiry #${iId}: ${inq?.subject || ''}`,
+                            });
+                          } else if (val.startsWith('PROJ-')) {
+                            const pid = Number(val.replace('PROJ-', ''));
+                            const projectList = (realProjects && realProjects.length > 0) ? realProjects : projects;
+                            const proj = projectList.find(p => p.id === pid);
+                            setPaymentForm({
+                              ...paymentForm,
+                              projectId: String(pid),
+                              projectRequestId: '',
+                              inquiryId: '',
+                              totalProjectAmount: proj?.budget ? String(proj.budget) : paymentForm.totalProjectAmount,
+                              clientId: proj?.client?.id ? String(proj.client.id) : paymentForm.clientId,
+                            });
+                          } else {
+                            setPaymentForm({ ...paymentForm, projectId: '', projectRequestId: '', inquiryId: '' });
+                          }
                         }}
                       >
-                        <option value="">-- Select Project (Optional) --</option>
+                        <option value="">-- Choose Project, Approved Request, or Inquiry --</option>
+                        {projectRequests.filter(r => r.status === 'APPROVED' && !r.downPaymentPaid && (!paymentForm.clientId || r.client?.id === Number(paymentForm.clientId))).length > 0 && (
+                          <optgroup label="PM Approved Project Requests (20% Down Payment)">
+                            {projectRequests.filter(r => r.status === 'APPROVED' && !r.downPaymentPaid && (!paymentForm.clientId || r.client?.id === Number(paymentForm.clientId))).map((r) => (
+                              <option key={`req-${r.id}`} value={`REQ-${r.id}`}>
+                                Request #{r.id}: {r.title} ({r.client?.name || 'Client'})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {inquiries.filter(i => i.pmDecision === 'APPROVED' && !i.downPaymentPaid && (!paymentForm.clientId || i.client?.id === Number(paymentForm.clientId))).length > 0 && (
+                          <optgroup label="PM Approved Inquiries & Quotations (20% Down Payment)">
+                            {inquiries.filter(i => i.pmDecision === 'APPROVED' && !i.downPaymentPaid && (!paymentForm.clientId || i.client?.id === Number(paymentForm.clientId))).map((i) => (
+                              <option key={`inq-${i.id}`} value={`INQ-${i.id}`}>
+                                Inquiry #{i.id}: {i.subject} ({i.client?.name || 'Client'})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
                         {((realProjects && realProjects.length > 0) ? realProjects : projects)
                           .filter(p => !paymentForm.clientId || !p.client?.id || p.client.id === Number(paymentForm.clientId))
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name} {p.client?.name ? `(${p.client.name})` : ''}
-                            </option>
-                          ))}
+                          .length > 0 && (
+                          <optgroup label="Active Construction Projects">
+                            {((realProjects && realProjects.length > 0) ? realProjects : projects)
+                              .filter(p => !paymentForm.clientId || !p.client?.id || p.client.id === Number(paymentForm.clientId))
+                              .map((p) => (
+                                <option key={`proj-${p.id}`} value={`PROJ-${p.id}`}>
+                                  {p.name} {p.client?.name ? `(${p.client.name})` : ''}
+                                </option>
+                              ))}
+                          </optgroup>
+                        )}
                       </select>
                     </div>
 
@@ -3352,6 +3957,7 @@ export default function ClientManagerDashboard() {
                       <label>Payment Date *</label>
                       <input
                         type="date"
+                        min={getTodayDateString()}
                         value={paymentForm.paymentDate}
                         onChange={(e) => setPaymentForm({ ...paymentForm, paymentDate: e.target.value })}
                         required

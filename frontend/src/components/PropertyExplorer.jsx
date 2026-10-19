@@ -46,9 +46,7 @@ export default function PropertyExplorer({
             className={`pill-tab-item ${activeTab === 'RESIDENCIES' ? 'active' : ''}`}
             onClick={() => handleTabClick('RESIDENCIES')}
           >
-            
             <span className="tab-text">Residencies</span>
-            <span className="tab-pill-badge">{residenciesCount} Available</span>
           </button>
 
           <button
@@ -56,9 +54,7 @@ export default function PropertyExplorer({
             className={`pill-tab-item ${activeTab === 'LANDS' ? 'active' : ''}`}
             onClick={() => handleTabClick('LANDS')}
           >
-            
             <span className="tab-text">Lands &amp; Plots</span>
-            <span className="tab-pill-badge">{landsCount} Plots</span>
           </button>
 
           <button
@@ -66,9 +62,7 @@ export default function PropertyExplorer({
             className={`pill-tab-item ${activeTab === 'APARTMENTS' ? 'active' : ''}`}
             onClick={() => handleTabClick('APARTMENTS')}
           >
-            
             <span className="tab-text">Apartments</span>
-            <span className="tab-pill-badge">{apartmentsCount} Units</span>
           </button>
         </div>
 
@@ -139,7 +133,7 @@ export default function PropertyExplorer({
                           className="btn-outline-green"
                           onClick={() => onInquire(item)}
                         >
-                          Inquire
+                          💬 Ask Details
                         </button>
                       )}
                       {onSelectProject && (

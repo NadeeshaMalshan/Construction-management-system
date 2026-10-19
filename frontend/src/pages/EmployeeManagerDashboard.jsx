@@ -7,18 +7,21 @@ import {
   deleteAttendanceRecord,
   deleteEmployeeById,
   formatDate,
+  generateDailyAttendanceQr,
   getAllEmployees,
   getAttendanceRecords,
   getAttendanceSummary,
   getEmployeeDashboardSummary,
   getNextEmployeeId,
   getProjects,
+  getTodayAttendanceQr,
   recordAttendance,
   recordCheckOut,
   registerEmployee,
   updateEmployeeProfile,
 } from '../services/api';
 import { downloadFile, exportCsv, exportExcel } from '../utils/documentDownload';
+import { QRCodeSVG } from 'qrcode.react';
 
 const ROLES_LIST = [
   'Site Engineer',
@@ -100,13 +103,89 @@ export default function EmployeeManagerDashboard() {
   }, []);
 
   // Attendance Views & Filters
-  const [attSubTab, setAttSubTab] = useState('markTable'); // 'markTable' | 'dayToDayLogs'
+  const [attSubTab, setAttSubTab] = useState('markTable'); // 'markTable' | 'qrStation' | 'dayToDayLogs'
   const [attSearch, setAttSearch] = useState('');
   const [attStatusFilter, setAttStatusFilter] = useState('ALL');
   const [attDeptFilter, setAttDeptFilter] = useState('ALL');
   const [logSearch, setLogSearch] = useState('');
   const [logStatusFilter, setLogStatusFilter] = useState('ALL');
   const [selectedExportEmpId, setSelectedExportEmpId] = useState('');
+
+  // Daily QR Code State
+  const [todayQr, setTodayQr] = useState(null);
+  const [loadingQr, setLoadingQr] = useState(false);
+  const [qrNotice, setQrNotice] = useState('');
+  const [qrError, setQrError] = useState('');
+  const [showQrPrintModal, setShowQrPrintModal] = useState(false);
+  const [qrSecondsLeft, setQrSecondsLeft] = useState(0);
+
+  const fetchTodayQr = async () => {
+    try {
+      setLoadingQr(true);
+      const data = await getTodayAttendanceQr();
+      setTodayQr(data);
+      if (data?.secondsRemaining) {
+        setQrSecondsLeft(data.secondsRemaining);
+      } else {
+        setQrSecondsLeft(0);
+      }
+    } catch (err) {
+      console.error('Failed to load today QR', err);
+    } finally {
+      setLoadingQr(false);
+    }
+  };
+
+  const handleGenerateDailyQr = async () => {
+    try {
+      setLoadingQr(true);
+      setQrError('');
+      const data = await generateDailyAttendanceQr('Employee Manager');
+      setTodayQr(data);
+      setQrSecondsLeft(data.secondsRemaining || 0);
+      setQrNotice('Daily attendance QR code generated successfully! Valid until 11:59:59 PM today.');
+      report('Daily attendance QR code generated successfully! Valid until 11:59:59 PM today.');
+      setTimeout(() => setQrNotice(''), 6000);
+      refreshData();
+    } catch (err) {
+      setQrError(err.message || 'Failed to generate daily QR code.');
+      fail(err);
+    } finally {
+      setLoadingQr(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTodayQr();
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'attendance') {
+      fetchTodayQr();
+    }
+  }, [tab]);
+
+  useEffect(() => {
+    if (qrSecondsLeft <= 0) return;
+    const interval = setInterval(() => {
+      setQrSecondsLeft((prev) => {
+        if (prev <= 1) {
+          fetchTodayQr();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [qrSecondsLeft]);
+
+  const formatCountdown = (totalSec) => {
+    if (!totalSec || totalSec <= 0) return '00:00:00 (Expired)';
+    const hrs = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    return `${String(hrs).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`;
+  };
 
   // Forms
   const [employeeForm, setEmployeeForm] = useState(emptyEmployee);
@@ -399,7 +478,10 @@ export default function EmployeeManagerDashboard() {
   const shiftSelectedDate = (days) => {
     const current = new Date(selectedDate + 'T00:00:00');
     current.setDate(current.getDate() + days);
-    setSelectedDate(localDateString(current));
+    const nextDate = localDateString(current);
+    if (nextDate <= today) {
+      setSelectedDate(nextDate);
+    }
   };
   //attendance marking dropdown
   const getStatusConfig = (status) => {
@@ -454,36 +536,36 @@ export default function EmployeeManagerDashboard() {
 
 
 
-  // 1-Click Instant Time In at Current Live Time
+  // 1-Click Instant Time In (at live clock if today, or standard work hour if historical)
   const quickCheckInNow = async (emp, status = 'PRESENT') => {
-    if (selectedDate !== today) {
-      fail(new Error(`Attendance can only be marked for today (${formatDate(today)}). Historical and upcoming dates cannot be marked.`));
+    if (selectedDate > today) {
+      fail(new Error(`Attendance cannot be marked for future dates (${formatDate(selectedDate)}).`));
       return;
     }
     const existing = attendanceList.find((a) => a.employee?.id === emp.id);
     if (existing) {
       if (existing.checkOutTime) {
-        fail(new Error(`Attendance for ${emp.name} is already finalized for today (${formatDate(today)}).`));
+        fail(new Error(`Attendance for ${emp.name} is already finalized for ${formatDate(selectedDate)}.`));
         return;
       }
       openCheckOutModal(emp, existing);
       return;
     }
 
-    const liveNow = getCurrentTimeStr();
+    const defaultTime = selectedDate === today ? getCurrentTimeStr() : (status === 'LATE' ? '09:30' : '08:00');
     try {
       setLoading(true);
       await recordAttendance({
         employeeId: emp.id,
         employee: { id: emp.id },
-        date: today,
+        date: selectedDate,
         status: status,
-        checkInTime: ['PRESENT', 'LATE', 'HALF_DAY'].includes(status) ? liveNow : null,
+        checkInTime: ['PRESENT', 'LATE', 'HALF_DAY'].includes(status) ? defaultTime : null,
         checkOutTime: null, // Leaves shift in progress until Time Out is marked
         remarks: status === 'PRESENT' ? 'Unavailable' : `Marked as ${status}`,
         recordedBy: 'Employee Manager',
       });
-      report(`Time In (Arrival) recorded for ${emp.name} at current live time (${liveNow}). Shift is now active.`);
+      report(`Time In (Arrival) recorded for ${emp.name} for ${formatDate(selectedDate)} (${defaultTime}). Shift is now active.`);
       await refreshData();
     } catch (err) {
       fail(err);
@@ -492,10 +574,10 @@ export default function EmployeeManagerDashboard() {
     }
   };
 
-  // 1-Click Instant Time Out at Current Live Time
+  // 1-Click Instant Time Out (at live clock if today, or 17:00 departure if historical)
   const quickCheckOutNow = async (emp, record) => {
-    if (selectedDate !== today) {
-      fail(new Error(`Check-out can only be recorded for today (${formatDate(today)}).`));
+    if (selectedDate > today) {
+      fail(new Error(`Check-out cannot be recorded for future dates (${formatDate(selectedDate)}).`));
       return;
     }
     if (!record) {
@@ -503,18 +585,18 @@ export default function EmployeeManagerDashboard() {
       return;
     }
     if (record.checkOutTime) {
-      fail(new Error(`Time Out for ${emp.name} has already been recorded today (${record.checkOutTime}). Attendance is finalized.`));
+      fail(new Error(`Time Out for ${emp.name} has already been recorded for ${formatDate(selectedDate)} (${record.checkOutTime}). Attendance is finalized.`));
       return;
     }
 
-    const liveNow = getCurrentTimeStr();
+    const defaultOut = selectedDate === today ? getCurrentTimeStr() : '17:00';
     try {
       setLoading(true);
       await recordCheckOut(record.id, {
-        checkOutTime: liveNow,
+        checkOutTime: defaultOut,
         remarks: record.remarks && record.remarks !== 'Unavailable' ? record.remarks : '',
       });
-      report(`Time Out (Departure) recorded for ${emp.name} at current live time (${liveNow}). Daily shift completed!`);
+      report(`Time Out (Departure) recorded for ${emp.name} for ${formatDate(selectedDate)} (${defaultOut}). Daily shift completed!`);
       await refreshData();
     } catch (err) {
       fail(err);
@@ -524,23 +606,23 @@ export default function EmployeeManagerDashboard() {
   };
 
   const openCheckInModal = (emp, initialStatus = 'PRESENT') => {
-    if (selectedDate !== today) {
-      fail(new Error(`Attendance can only be marked for today (${formatDate(today)}). Historical and upcoming dates cannot be marked.`));
+    if (selectedDate > today) {
+      fail(new Error(`Attendance cannot be marked for future dates (${formatDate(selectedDate)}).`));
       return;
     }
     const existing = attendanceList.find((a) => a.employee?.id === emp.id);
     if (existing) {
       if (existing.checkOutTime) {
-        fail(new Error(`Attendance for ${emp.name} is already finalized for today (${formatDate(today)}).`));
+        fail(new Error(`Attendance for ${emp.name} is already finalized for ${formatDate(selectedDate)}.`));
         return;
       }
       openCheckOutModal(emp, existing);
       return;
     }
 
-    // Auto-populate with current live time
-    const liveNow = getCurrentTimeStr();
-    let inTime = liveNow;
+    // Auto-populate with live time if today, or standard hours if historical
+    const defaultIn = selectedDate === today ? getCurrentTimeStr() : (initialStatus === 'LATE' ? '09:30' : '08:00');
+    let inTime = defaultIn;
     let rem = 'Unavailable';
 
     if (initialStatus === 'LATE') {
@@ -568,8 +650,8 @@ export default function EmployeeManagerDashboard() {
   };
 
   const openCheckOutModal = (emp, record) => {
-    if (selectedDate !== today) {
-      fail(new Error(`Check-out can only be recorded for today (${formatDate(today)}).`));
+    if (selectedDate > today) {
+      fail(new Error(`Check-out cannot be recorded for future dates (${formatDate(selectedDate)}).`));
       return;
     }
     if (!record) {
@@ -577,20 +659,19 @@ export default function EmployeeManagerDashboard() {
       return;
     }
     if (record.checkOutTime) {
-      fail(new Error(`Time Out for ${emp.name} has already been recorded today (${record.checkOutTime}). Attendance is finalized.`));
+      fail(new Error(`Time Out for ${emp.name} has already been recorded for ${formatDate(selectedDate)} (${record.checkOutTime}). Attendance is finalized.`));
       return;
     }
 
-    // Auto-populate departure with current live time
-    const liveNow = getCurrentTimeStr();
+    const defaultOut = selectedDate === today ? getCurrentTimeStr() : '17:00';
 
     setMarkingModalEmp(emp);
     setMarkingModalMode('checkout');
     setModalAttRecord(record);
     setModalAttForm({
       status: record.status || 'PRESENT',
-      checkInTime: record.checkInTime || liveNow,
-      checkOutTime: liveNow,
+      checkInTime: record.checkInTime || (selectedDate === today ? getCurrentTimeStr() : '08:00'),
+      checkOutTime: defaultOut,
       remarks: record.remarks && record.remarks !== 'Unavailable' ? record.remarks : '',
     });
     setModalAttError('');
@@ -612,18 +693,18 @@ export default function EmployeeManagerDashboard() {
   };
 
   const handleModalStatusChange = (newStatus) => {
-    const liveNow = getCurrentTimeStr();
-    let inTime = liveNow;
+    const defaultIn = selectedDate === today ? getCurrentTimeStr() : (newStatus === 'LATE' ? '09:30' : '08:00');
+    let inTime = defaultIn;
     let rem = modalAttForm.remarks;
 
     if (newStatus === 'PRESENT') {
-      inTime = liveNow;
+      inTime = defaultIn;
       rem = 'Unavailable';
     } else if (newStatus === 'LATE') {
-      inTime = liveNow;
+      inTime = defaultIn;
       rem = rem === 'Unavailable' ? 'Delayed arrival on site' : rem;
     } else if (newStatus === 'HALF_DAY') {
-      inTime = liveNow;
+      inTime = defaultIn;
       rem = rem === 'Unavailable' ? 'Half day shift' : rem;
     } else if (newStatus === 'ABSENT') {
       inTime = '';
@@ -645,8 +726,8 @@ export default function EmployeeManagerDashboard() {
     if (e) e.preventDefault();
     if (!markingModalEmp) return;
 
-    if (selectedDate !== today) {
-      setModalAttError(`Attendance can only be marked for today (${formatDate(today)}).`);
+    if (selectedDate > today) {
+      setModalAttError(`Attendance cannot be marked for future dates (${formatDate(selectedDate)}).`);
       return;
     }
 
@@ -655,35 +736,35 @@ export default function EmployeeManagerDashboard() {
 
     try {
       if (markingModalMode === 'checkin') {
-        const { status, remarks } = modalAttForm;
-        // Strictly freeze arrival time to live current clock
-        const liveNow = getCurrentTimeStr();
+        const { status, remarks, checkInTime } = modalAttForm;
+        const defaultIn = selectedDate === today ? getCurrentTimeStr() : (status === 'LATE' ? '09:30' : '08:00');
+        const effectiveCheckIn = ['PRESENT', 'LATE', 'HALF_DAY'].includes(status) ? (checkInTime || defaultIn) : null;
 
         const finalRemarks = status === 'PRESENT' ? 'Unavailable' : (remarks.trim() || `Marked as ${status}`);
         await recordAttendance({
           employeeId: markingModalEmp.id,
           employee: { id: markingModalEmp.id },
-          date: today,
+          date: selectedDate,
           status: status,
-          checkInTime: ['PRESENT', 'LATE', 'HALF_DAY'].includes(status) ? liveNow : null,
+          checkInTime: effectiveCheckIn,
           checkOutTime: null, // Left open until Step 2: Time Out upon leaving
           remarks: finalRemarks,
           recordedBy: 'Employee Manager',
         });
 
-        report(`Time In (Arrival) recorded for ${markingModalEmp.name} at current live time (${liveNow}). Shift is now active.`);
+        report(`Time In (Arrival) recorded for ${markingModalEmp.name} for ${formatDate(selectedDate)}. Shift is now active.`);
       } else {
         // Mode === 'checkout'
-        const { remarks } = modalAttForm;
-        // Strictly freeze leaving time to live current clock upon leaving
-        const liveNow = getCurrentTimeStr();
+        const { remarks, checkOutTime } = modalAttForm;
+        const defaultOut = selectedDate === today ? getCurrentTimeStr() : '17:00';
+        const effectiveCheckOut = checkOutTime || defaultOut;
 
         await recordCheckOut(modalAttRecord.id, {
-          checkOutTime: liveNow,
+          checkOutTime: effectiveCheckOut,
           remarks: remarks.trim() || modalAttRecord.remarks || '',
         });
 
-        report(`Time Out (Leaving) recorded for ${markingModalEmp.name} at current live time (${liveNow}). Daily shift completed!`);
+        report(`Time Out (Leaving) recorded for ${markingModalEmp.name} for ${formatDate(selectedDate)}. Daily shift completed!`);
       }
 
       closeMarkModal();
@@ -1587,7 +1668,7 @@ export default function EmployeeManagerDashboard() {
                 </div>
 
                 {/* Sub-view switcher tabs */}
-                <div style={{ display: 'inline-flex', background: '#f3f4f6', padding: '4px', borderRadius: '10px', gap: '4px' }}>
+                <div style={{ display: 'inline-flex', background: '#f3f4f6', padding: '4px', borderRadius: '10px', gap: '4px', flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     onClick={() => {
@@ -1610,6 +1691,53 @@ export default function EmployeeManagerDashboard() {
                   >
                     Today's Marking Register
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttSubTab('qrStation');
+                      fetchTodayQr();
+                    }}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: attSubTab === 'qrStation' ? '#047857' : 'transparent',
+                      color: attSubTab === 'qrStation' ? '#ffffff' : '#374151',
+                      fontWeight: 700,
+                      fontSize: '0.88rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <span>📷</span> Daily Attendance QR
+                    {todayQr?.hasActiveQr ? (
+                      <span style={{
+                        background: '#10b981',
+                        color: '#ffffff',
+                        padding: '1px 7px',
+                        borderRadius: '10px',
+                        fontSize: '0.7rem',
+                        fontWeight: 800,
+                      }}>
+                        ACTIVE
+                      </span>
+                    ) : (
+                      <span style={{
+                        background: '#f59e0b',
+                        color: '#ffffff',
+                        padding: '1px 7px',
+                        borderRadius: '10px',
+                        fontSize: '0.7rem',
+                        fontWeight: 800,
+                      }}>
+                        {todayQr?.status === 'EXPIRED' ? 'EXPIRED' : 'NOT READY'}
+                      </span>
+                    )}
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setAttSubTab('dayToDayLogs')}
@@ -1645,32 +1773,139 @@ export default function EmployeeManagerDashboard() {
               {/* Date Information Bar */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
                 {attSubTab === 'markTable' ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', width: '100%' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                      <span style={{
-                        padding: '6px 14px',
-                        borderRadius: '8px',
-                        fontSize: '0.88rem',
-                        fontWeight: 700,
-                        background: '#ecfdf5',
-                        color: '#047857',
-                        border: '1px solid #a7f3d0',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                      }}>
-                        Today's Marking Register: <b>{formatDate(today)}</b> | Live Time: <b>{currentTimeDisplay}</b>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', width: '100%' }}>
+                    {/* Interactive Date Switcher Toolbar */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#374151', marginRight: '2px' }}>
+                        Register Date:
                       </span>
-                      <span style={{ fontSize: '0.82rem', color: '#047857', background: '#f0fdf4', padding: '6px 12px', borderRadius: '6px', border: '1px solid #bbf7d0', fontWeight: 600 }}>
-                        Marking is active for Today only. Historical and upcoming dates cannot be marked.
-                      </span>
+
+                      {/* Previous Day */}
+                      <button
+                        type="button"
+                        onClick={() => shiftSelectedDate(-1)}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid #d1d5db',
+                          background: '#ffffff',
+                          color: '#374151',
+                          fontWeight: 700,
+                          fontSize: '0.82rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                        }}
+                        title="Go to Previous Day"
+                      >
+                        ◀ Prev Day
+                      </button>
+
+                      {/* Interactive Date Picker */}
+                      <input
+                        type="date"
+                        max={today}
+                        value={selectedDate}
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            if (e.target.value > today) {
+                              setSelectedDate(today);
+                            } else {
+                              setSelectedDate(e.target.value);
+                            }
+                          }
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: selectedDate === today ? '2px solid #047857' : '2px solid #d97706',
+                          background: '#ffffff',
+                          color: '#111827',
+                          fontWeight: 700,
+                          fontSize: '0.88rem',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                        }}
+                      />
+
+                      {/* Next Day */}
+                      <button
+                        type="button"
+                        onClick={() => shiftSelectedDate(1)}
+                        disabled={selectedDate >= today}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid #d1d5db',
+                          background: selectedDate >= today ? '#f3f4f6' : '#ffffff',
+                          color: selectedDate >= today ? '#9ca3af' : '#374151',
+                          fontWeight: 700,
+                          fontSize: '0.82rem',
+                          cursor: selectedDate >= today ? 'not-allowed' : 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          boxShadow: selectedDate >= today ? 'none' : '0 1px 2px rgba(0,0,0,0.05)',
+                        }}
+                        title={selectedDate >= today ? 'Cannot navigate to future dates' : 'Go to Next Day'}
+                      >
+                        Next Day ▶
+                      </button>
+
+                      {/* Today Jump Button */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDate(today)}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: '6px',
+                          border: selectedDate === today ? '1px solid #86efac' : '1px solid #047857',
+                          background: selectedDate === today ? '#ecfdf5' : '#047857',
+                          color: selectedDate === today ? '#047857' : '#ffffff',
+                          fontWeight: 700,
+                          fontSize: '0.82rem',
+                          cursor: 'pointer',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                        }}
+                      >
+                        {selectedDate === today ? '● Today (Live)' : 'Jump to Today'}
+                      </button>
+
+                      {/* Status indicator pill */}
+                      {selectedDate === today ? (
+                        <span style={{
+                          padding: '5px 10px',
+                          borderRadius: '6px',
+                          fontSize: '0.78rem',
+                          fontWeight: 700,
+                          background: '#ecfdf5',
+                          color: '#047857',
+                          border: '1px solid #a7f3d0',
+                        }}>
+                          Live Clock: <b>{currentTimeDisplay}</b>
+                        </span>
+                      ) : (
+                        <span style={{
+                          padding: '5px 10px',
+                          borderRadius: '6px',
+                          fontSize: '0.78rem',
+                          fontWeight: 700,
+                          background: '#fffbeb',
+                          color: '#92400e',
+                          border: '1px solid #fde68a',
+                        }}>
+                          Historical: <b>{formatDate(selectedDate)}</b>
+                        </span>
+                      )}
                     </div>
 
+                    {/* Export Register Button */}
                     <button
                       type="button"
                       onClick={() => {
                         exportExcel(
-                          `Odiliya_Daily_Attendance_${today}`,
+                          `Odiliya_Attendance_${selectedDate}`,
                           attendanceList.map((a) => ({
                             'Date': a.date,
                             'Employee ID': a.employee?.employeeId || `EMP-${a.employee?.id}`,
@@ -1684,9 +1919,9 @@ export default function EmployeeManagerDashboard() {
                             'Recorded By': a.recordedBy || 'Manager',
                           })),
                           null,
-                          `Attendance ${today}`
+                          `Attendance ${selectedDate}`
                         );
-                        report(`Today's Attendance exported as Excel sheet (.xlsx).`);
+                        report(`Attendance for ${formatDate(selectedDate)} exported as Excel sheet (.xlsx).`);
                       }}
                       style={{
                         padding: '7px 14px',
@@ -1702,7 +1937,7 @@ export default function EmployeeManagerDashboard() {
                         gap: '6px',
                       }}
                     >
-                      Export Today's Attendance (Excel)
+                      Export Register ({selectedDate})
                     </button>
                   </div>
                 ) : (
@@ -1710,6 +1945,7 @@ export default function EmployeeManagerDashboard() {
                     <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#374151' }}>Filter Historical Logs by Date:</span>
                     <input
                       type="date"
+                      max={today}
                       value={selectedDate}
                       onChange={(e) => {
                         if (e.target.value) setSelectedDate(e.target.value);
@@ -1740,6 +1976,180 @@ export default function EmployeeManagerDashboard() {
             {/* VIEW 1: DAILY MARKING REGISTER TABLE */}
             {attSubTab === 'markTable' && (
               <div>
+                {/* Historical Date Notice OR Today's Daily QR Alert Banner */}
+                {selectedDate < today ? (
+                  <div style={{
+                    background: '#fffbeb',
+                    borderRadius: '12px',
+                    border: '1px solid #fde68a',
+                    padding: '14px 20px',
+                    marginBottom: '20px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '10px',
+                        background: '#d97706',
+                        color: '#ffffff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '1.25rem'
+                      }}>
+                        📅
+                      </div>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: 800, color: '#92400e', fontSize: '0.98rem' }}>
+                            Historical Attendance Register — {formatDate(selectedDate)}
+                          </span>
+                          <span style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', padding: '2px 8px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 800 }}>
+                            PAST DATE
+                          </span>
+                        </div>
+                        <p style={{ margin: '3px 0 0', fontSize: '0.82rem', color: '#78350f' }}>
+                          Viewing past attendance records for {formatDate(selectedDate)}. You can review, mark past attendance, or jump back to today's live register. Daily QR code scanning applies only to today.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDate(today)}
+                      style={{
+                        padding: '8px 16px',
+                        background: '#047857',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontWeight: 700,
+                        fontSize: '0.82rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Return to Today's Register ({today})
+                    </button>
+                  </div>
+                ) : (
+                  /* Daily QR Code Quick Alert Banner */
+                  <div style={{
+                    background: todayQr?.hasActiveQr ? '#f0fdf4' : '#fffbeb',
+                    borderRadius: '12px',
+                    border: `1px solid ${todayQr?.hasActiveQr ? '#86efac' : '#fde68a'}`,
+                    padding: '14px 20px',
+                    marginBottom: '20px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '10px',
+                        background: todayQr?.hasActiveQr ? '#047857' : '#d97706',
+                        color: '#ffffff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '1.25rem'
+                      }}>
+                        📷
+                      </div>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: 800, color: '#111827', fontSize: '0.98rem' }}>
+                            Today's Daily Attendance QR Code
+                          </span>
+                          {todayQr?.hasActiveQr ? (
+                            <span style={{ background: '#10b981', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 800 }}>
+                              ACTIVE • {formatCountdown(qrSecondsLeft)} LEFT
+                            </span>
+                          ) : (
+                            <span style={{ background: '#ef4444', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 800 }}>
+                              {todayQr?.status === 'EXPIRED' ? 'EXPIRED AT 11:59:59 PM' : 'NOT GENERATED'}
+                            </span>
+                          )}
+                        </div>
+                        <p style={{ margin: '3px 0 0', fontSize: '0.82rem', color: '#4b5563' }}>
+                          {todayQr?.hasActiveQr
+                            ? `Valid until 11:59:59 PM today. ${todayQr.totalScans || 0} worker(s) marked attendance via QR code.`
+                            : 'Workers cannot scan until today\'s QR code is created. Daily QR codes expire automatically at 11:59:59 PM.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      {todayQr?.hasActiveQr ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setAttSubTab('qrStation')}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#047857',
+                              color: '#ffffff',
+                              border: 'none',
+                              borderRadius: '8px',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            View / Print QR Code
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleGenerateDailyQr}
+                            disabled={loadingQr}
+                            style={{
+                              padding: '8px 14px',
+                              background: '#f3f4f6',
+                              color: '#374151',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '8px',
+                              fontWeight: 600,
+                              fontSize: '0.82rem',
+                              cursor: loadingQr ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            {loadingQr ? 'Generating...' : 'Regenerate'}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleGenerateDailyQr}
+                          disabled={loadingQr}
+                          style={{
+                            padding: '9px 18px',
+                            background: '#047857',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontWeight: 800,
+                            fontSize: '0.85rem',
+                            cursor: loadingQr ? 'not-allowed' : 'pointer',
+                            boxShadow: '0 2px 4px rgba(4, 120, 87, 0.2)'
+                          }}
+                        >
+                          {loadingQr ? 'Creating...' : '+ Generate Today\'s QR Code'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Quick Metrics for selected date */}
                 <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '14px', marginBottom: '20px' }}>
                   <div style={{ background: '#ffffff', padding: '16px', borderRadius: '10px', border: '1px solid #e5e7eb', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
@@ -1832,7 +2242,7 @@ export default function EmployeeManagerDashboard() {
                       Attendance Marking Register Table — {formatDate(selectedDate)}
                     </div>
                     <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-                      Showing {filteredAttendanceEmployees.length} employee(s) • Unmarked staff can be marked once. Once recorded, attendance is locked permanently.
+                      Showing {filteredAttendanceEmployees.length} employee(s) • {selectedDate === today ? "Unmarked staff can be marked once. Once recorded, attendance is locked." : `Historical attendance register for ${formatDate(selectedDate)}.`}
                     </div>
                   </div>
 
@@ -1996,9 +2406,9 @@ export default function EmployeeManagerDashboard() {
                                         alignItems: 'center',
                                         boxShadow: '0 2px 4px rgba(4, 120, 87, 0.25)',
                                       }}
-                                      title={`Step 1: Mark Arrival (Time In) for ${emp.name} at current live time (${getCurrentTimeStr()})`}
+                                      title={`Step 1: Mark Arrival (Time In) for ${emp.name} on ${formatDate(selectedDate)}`}
                                     >
-                                      Time In ({getCurrentTimeStr()})
+                                      Time In {selectedDate === today ? `(${getCurrentTimeStr()})` : '(08:00)'}
                                     </button>
                                   ) : record?.checkInTime ? (
                                     <span
@@ -2051,9 +2461,9 @@ export default function EmployeeManagerDashboard() {
                                         alignItems: 'center',
                                         boxShadow: '0 2px 4px rgba(217, 119, 6, 0.3)',
                                       }}
-                                      title={`Step 2: Mark Leaving (Time Out) for ${emp.name} at current live time (${getCurrentTimeStr()})`}
+                                      title={`Step 2: Mark Leaving (Time Out) for ${emp.name} on ${formatDate(selectedDate)}`}
                                     >
-                                      Time Out ({getCurrentTimeStr()})
+                                      Time Out {selectedDate === today ? `(${getCurrentTimeStr()})` : '(17:00)'}
                                     </button>
                                   ) : record?.checkOutTime ? (
                                     <span
@@ -2189,6 +2599,392 @@ export default function EmployeeManagerDashboard() {
                       )}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 3: DAILY ATTENDANCE QR CODE STATION */}
+            {attSubTab === 'qrStation' && (
+              <div>
+                {/* Station Hero / Header */}
+                <div style={{
+                  background: 'linear-gradient(135deg, #064e3b 0%, #047857 60%, #059669 100%)',
+                  borderRadius: '16px',
+                  padding: '28px 32px',
+                  color: '#ffffff',
+                  marginBottom: '24px',
+                  boxShadow: '0 4px 12px rgba(4, 120, 87, 0.2)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '20px'
+                }}>
+                  <div>
+                    <span style={{
+                      fontSize: '0.75rem',
+                      fontWeight: 800,
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      padding: '4px 10px',
+                      borderRadius: '20px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em'
+                    }}>
+                      Daily Workforce Verification
+                    </span>
+                    <h2 style={{ margin: '8px 0 4px', fontSize: '1.6rem', fontWeight: 800 }}>
+                      Daily Attendance QR Code Station
+                    </h2>
+                    <p style={{ margin: 0, opacity: 0.9, fontSize: '0.92rem', maxWidth: '640px' }}>
+                      Generate and display a fresh QR code every day. Workers scan this code to record Time-In &amp; Time-Out.
+                      Each code is cryptographically unique and strictly valid until <b>11:59:59 PM today</b>.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={handleGenerateDailyQr}
+                      disabled={loadingQr}
+                      style={{
+                        padding: '12px 24px',
+                        background: '#ffffff',
+                        color: '#047857',
+                        border: 'none',
+                        borderRadius: '10px',
+                        fontWeight: 800,
+                        fontSize: '0.92rem',
+                        cursor: loadingQr ? 'not-allowed' : 'pointer',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                      }}
+                    >
+                      <span>🔄</span>
+                      {loadingQr
+                        ? 'Processing...'
+                        : todayQr?.hasActiveQr
+                        ? 'Regenerate Daily QR'
+                        : 'Generate Today\'s QR Code'}
+                    </button>
+
+                    {todayQr?.hasActiveQr && (
+                      <button
+                        type="button"
+                        onClick={() => setShowQrPrintModal(true)}
+                        style={{
+                          padding: '12px 20px',
+                          background: 'rgba(255, 255, 255, 0.15)',
+                          color: '#ffffff',
+                          border: '1px solid rgba(255, 255, 255, 0.3)',
+                          borderRadius: '10px',
+                          fontWeight: 700,
+                          fontSize: '0.92rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <span>🖨️</span> Print Poster (A4)
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {qrNotice && (
+                  <div style={{ background: '#ecfdf5', color: '#065f46', padding: '12px 16px', borderRadius: '10px', border: '1px solid #a7f3d0', marginBottom: '20px', fontWeight: 600 }}>
+                    {qrNotice}
+                  </div>
+                )}
+                {qrError && (
+                  <div style={{ background: '#fef2f2', color: '#991b1b', padding: '12px 16px', borderRadius: '10px', border: '1px solid #fecaca', marginBottom: '20px', fontWeight: 600 }}>
+                    {qrError}
+                  </div>
+                )}
+
+                {/* Main QR Presentation Grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 440px) 1fr', gap: '24px', marginBottom: '24px' }}>
+                  {/* Left Column: QR Code Display Card */}
+                  <div style={{
+                    background: '#ffffff',
+                    borderRadius: '16px',
+                    padding: '28px',
+                    border: '1px solid #e5e7eb',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    textAlign: 'center',
+                  }}>
+                    {/* Status Pill */}
+                    <div style={{ marginBottom: '16px' }}>
+                      {todayQr?.hasActiveQr ? (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          background: '#ecfdf5',
+                          color: '#047857',
+                          padding: '6px 16px',
+                          borderRadius: '20px',
+                          fontWeight: 800,
+                          fontSize: '0.85rem',
+                          border: '1px solid #a7f3d0'
+                        }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }}></span>
+                          ACTIVE UNTIL 11:59:59 PM TODAY
+                        </span>
+                      ) : (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          background: '#fef2f2',
+                          color: '#b91c1c',
+                          padding: '6px 16px',
+                          borderRadius: '20px',
+                          fontWeight: 800,
+                          fontSize: '0.85rem',
+                          border: '1px solid #fecaca'
+                        }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'inline-block' }}></span>
+                          {todayQr?.status === 'EXPIRED' ? 'EXPIRED (11:59:59 PM REACHED)' : 'NO QR GENERATED FOR TODAY'}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* QR Code Canvas/SVG */}
+                    <div style={{
+                      background: '#ffffff',
+                      padding: '20px',
+                      borderRadius: '16px',
+                      border: '2px dashed #047857',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+                      marginBottom: '20px',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      minHeight: '260px',
+                      width: '260px',
+                    }}>
+                      {todayQr?.hasActiveQr ? (
+                        <QRCodeSVG
+                          value={JSON.stringify({
+                            company: 'Odiliya',
+                            purpose: 'ATTENDANCE',
+                            token: todayQr.codeToken,
+                            date: todayQr.date,
+                            expiresAt: todayQr.expiresAt,
+                          })}
+                          size={220}
+                          level="H"
+                          includeMargin={false}
+                        />
+                      ) : (
+                        <div style={{ color: '#9ca3af', padding: '20px', textAlign: 'center' }}>
+                          <div style={{ fontSize: '3rem', marginBottom: '8px' }}>📷</div>
+                          <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#374151' }}>
+                            {todayQr?.status === 'EXPIRED' ? 'QR Code Expired' : 'No Active QR Code'}
+                          </div>
+                          <div style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '4px' }}>
+                            Click "Generate Today's QR Code" above to activate today's attendance code.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* QR Metadata & Countdown */}
+                    {todayQr?.hasActiveQr ? (
+                      <div style={{ width: '100%' }}>
+                        {/* Countdown Timer */}
+                        <div style={{
+                          background: '#f8fafc',
+                          borderRadius: '10px',
+                          padding: '12px 16px',
+                          marginBottom: '16px',
+                          border: '1px solid #e2e8f0',
+                        }}>
+                          <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>
+                            Time Remaining Before Midnight Expiry
+                          </div>
+                          <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#047857', fontFamily: 'monospace', marginTop: '2px' }}>
+                            {formatCountdown(qrSecondsLeft)}
+                          </div>
+                        </div>
+
+                        {/* Token Details */}
+                        <div style={{
+                          background: '#f9fafb',
+                          borderRadius: '8px',
+                          padding: '10px 14px',
+                          border: '1px solid #e5e7eb',
+                          fontSize: '0.82rem',
+                          textAlign: 'left',
+                          marginBottom: '16px'
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                            <span style={{ color: '#6b7280' }}>Token ID:</span>
+                            <span style={{ fontWeight: 700, fontFamily: 'monospace', color: '#111827' }}>{todayQr.codeToken}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                            <span style={{ color: '#6b7280' }}>Date:</span>
+                            <span style={{ fontWeight: 600 }}>{todayQr.date}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: '#6b7280' }}>Expiry:</span>
+                            <span style={{ fontWeight: 600, color: '#b91c1c' }}>Today at 11:59:59 PM</span>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard?.writeText(todayQr.codeToken);
+                              report(`Token ${todayQr.codeToken} copied to clipboard!`);
+                            }}
+                            style={{
+                              flex: 1,
+                              padding: '9px 12px',
+                              background: '#f3f4f6',
+                              color: '#374151',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '8px',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            📋 Copy Token
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowQrPrintModal(true)}
+                            style={{
+                              flex: 1,
+                              padding: '9px 12px',
+                              background: '#047857',
+                              color: '#ffffff',
+                              border: 'none',
+                              borderRadius: '8px',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            🖨️ Print Poster
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleGenerateDailyQr}
+                        disabled={loadingQr}
+                        style={{
+                          width: '100%',
+                          padding: '12px',
+                          background: '#047857',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '10px',
+                          fontWeight: 800,
+                          fontSize: '0.92rem',
+                          cursor: loadingQr ? 'not-allowed' : 'pointer',
+                          boxShadow: '0 2px 6px rgba(4, 120, 87, 0.25)',
+                        }}
+                      >
+                        {loadingQr ? 'Creating...' : '+ Generate Daily QR Code Now'}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Right Column: Workforce Scan Statistics & Operational Guidelines */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    {/* Live Stats Row */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px' }}>
+                      <div style={{ background: '#ffffff', borderRadius: '12px', padding: '18px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                        <div style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 700, textTransform: 'uppercase' }}>QR SCANS TODAY</div>
+                        <div style={{ fontSize: '1.8rem', fontWeight: 900, color: '#047857', marginTop: '4px' }}>
+                          {todayQr?.totalScans || 0}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '4px' }}>Total scan transactions logged</div>
+                      </div>
+
+                      <div style={{ background: '#ffffff', borderRadius: '12px', padding: '18px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                        <div style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 700, textTransform: 'uppercase' }}>WORKERS PRESENT</div>
+                        <div style={{ fontSize: '1.8rem', fontWeight: 900, color: '#111827', marginTop: '4px' }}>
+                          {attSummary.presentCount ?? 0} <span style={{ fontSize: '1rem', fontWeight: 600, color: '#6b7280' }}>/ {employees.length}</span>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#059669', marginTop: '4px' }}>
+                          {employees.length > 0 ? Math.round(((attSummary.presentCount ?? 0) / employees.length) * 100) : 0}% Attendance rate
+                        </div>
+                      </div>
+
+                      <div style={{ background: '#ffffff', borderRadius: '12px', padding: '18px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                        <div style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 700, textTransform: 'uppercase' }}>QR CODE VALIDITY</div>
+                        <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#b91c1c', marginTop: '6px' }}>
+                          Until 11:59:59 PM
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '4px' }}>
+                          Expires midnight daily
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Operational Guidelines Card */}
+                    <div style={{ background: '#ffffff', borderRadius: '14px', padding: '24px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                      <h3 style={{ margin: '0 0 12px', color: '#111827', fontSize: '1.1rem', fontWeight: 800 }}>
+                        How QR Attendance Works
+                      </h3>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                          <span style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#ecfdf5', color: '#047857', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '0.85rem' }}>1</span>
+                          <div>
+                            <div style={{ fontWeight: 700, color: '#111827', fontSize: '0.9rem' }}>Display or Print Daily Poster</div>
+                            <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '2px' }}>
+                              Display this screen at site office reception or click "Print Poster" to post the printed A4 sheet at the entrance gate.
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                          <span style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#ecfdf5', color: '#047857', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '0.85rem' }}>2</span>
+                          <div>
+                            <div style={{ fontWeight: 700, color: '#111827', fontSize: '0.9rem' }}>Workers Scan to Check In &amp; Check Out</div>
+                            <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '2px' }}>
+                              Employees log into the Odiliya Portal and tap "Scan QR for Attendance".
+                              <b> First scan marks Time-In (Arrival)</b>; <b>second scan marks Time-Out (Departure)</b>.
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                          <span style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#ecfdf5', color: '#047857', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '0.85rem' }}>3</span>
+                          <div>
+                            <div style={{ fontWeight: 700, color: '#111827', fontSize: '0.9rem' }}>Automatic Daily Expiration at 11:59:59 PM</div>
+                            <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '2px' }}>
+                              Every day at 11:59:59 PM, the code automatically expires. The Employee Manager generates a new QR code for each working day to ensure total integrity.
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                          <span style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#ecfdf5', color: '#047857', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '0.85rem' }}>4</span>
+                          <div>
+                            <div style={{ fontWeight: 700, color: '#111827', fontSize: '0.9rem' }}>Instant Dual-Side Synchronization</div>
+                            <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '2px' }}>
+                              Attendance is saved instantly. Workers see it in their personal history; Employee Manager sees all workers in Today's Marking Register tagged with "QR Code Scan".
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -2796,14 +3592,28 @@ export default function EmployeeManagerDashboard() {
               )}
 
               <form onSubmit={handleSaveModalAttendance}>
-                {/* Live Real-Time & Date Box */}
-                <div style={{ background: '#f0fdf4', padding: '12px 14px', borderRadius: '8px', border: '1px solid #bbf7d0', marginBottom: '16px', fontSize: '0.88rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                {/* Real-Time & Date Box */}
+                <div style={{
+                  background: selectedDate === today ? '#f0fdf4' : '#fffbeb',
+                  padding: '12px 14px',
+                  borderRadius: '8px',
+                  border: `1px solid ${selectedDate === today ? '#bbf7d0' : '#fde68a'}`,
+                  marginBottom: '16px',
+                  fontSize: '0.88rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '8px'
+                }}>
                   <div>
-                    <span style={{ color: '#4b5563', fontSize: '0.8rem' }}>Date: </span>
-                    <strong style={{ color: '#047857' }}>{formatDate(today)}</strong>
+                    <span style={{ color: '#4b5563', fontSize: '0.8rem' }}>Register Date: </span>
+                    <strong style={{ color: selectedDate === today ? '#047857' : '#92400e' }}>
+                      {formatDate(selectedDate)} {selectedDate === today ? '(Today)' : '(Historical Record)'}
+                    </strong>
                   </div>
                   <div>
-                    <span style={{ color: '#4b5563', fontSize: '0.8rem' }}>Live Clock Time: </span>
+                    <span style={{ color: '#4b5563', fontSize: '0.8rem' }}>Live System Clock: </span>
                     <strong style={{ color: '#047857', fontSize: '0.95rem' }}>{currentTimeDisplay}</strong>
                   </div>
                 </div>
@@ -2831,36 +3641,67 @@ export default function EmployeeManagerDashboard() {
 
                     {/* Time In section (Active for Present, Late, Half Day) */}
                     {['PRESENT', 'LATE', 'HALF_DAY'].includes(modalAttForm.status) ? (
-                      <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
-                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#065f46', marginBottom: '8px' }}>
-                          Arrival Timestamp (Time In) — FROZEN TO CURRENT TIME:
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-                          <div style={{
-                            padding: '10px 18px',
-                            borderRadius: '8px',
-                            border: '1px solid #059669',
-                            fontSize: '1.35rem',
-                            fontWeight: 800,
-                            background: '#ffffff',
-                            color: '#065f46',
-                            fontFamily: 'monospace',
-                            letterSpacing: '1px',
-                          }}>
-                            {getCurrentTimeStr()}
+                      selectedDate === today ? (
+                        <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+                          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#065f46', marginBottom: '8px' }}>
+                            Arrival Timestamp (Time In) — FROZEN TO CURRENT TIME:
                           </div>
-                          <div style={{ fontSize: '0.85rem', color: '#047857', fontWeight: 700 }}>
-                            Live System Clock: <b>{currentTimeDisplay}</b>
-                            <div style={{ fontSize: '0.75rem', fontWeight: 500, color: '#065f46', marginTop: '2px' }}>
-                              Time is permanently locked to current arrival time.
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                            <div style={{
+                              padding: '10px 18px',
+                              borderRadius: '8px',
+                              border: '1px solid #059669',
+                              fontSize: '1.35rem',
+                              fontWeight: 800,
+                              background: '#ffffff',
+                              color: '#065f46',
+                              fontFamily: 'monospace',
+                              letterSpacing: '1px',
+                            }}>
+                              {getCurrentTimeStr()}
+                            </div>
+                            <div style={{ fontSize: '0.85rem', color: '#047857', fontWeight: 700 }}>
+                              Live System Clock: <b>{currentTimeDisplay}</b>
+                              <div style={{ fontSize: '0.75rem', fontWeight: 500, color: '#065f46', marginTop: '2px' }}>
+                                Time is permanently locked to current arrival time.
+                              </div>
                             </div>
                           </div>
+                          <div style={{ fontSize: '0.74rem', color: '#047857', marginTop: '10px' }}>
+                            Step 1 of 2: Records arrival and starts active shift. Step 2 (Time Out) will be marked separately upon departure.
+                          </div>
                         </div>
-                        <div style={{ fontSize: '0.74rem', color: '#047857', marginTop: '10px' }}>
-                          Step 1 of 2: Records arrival and starts active shift. Step 2 (Time Out) will be marked separately upon departure.
+                      ) : (
+                        <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+                          <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, color: '#065f46', marginBottom: '8px' }}>
+                            Arrival Timestamp (Time In) for {formatDate(selectedDate)}:
+                          </label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                            <input
+                              type="time"
+                              value={modalAttForm.checkInTime || (modalAttForm.status === 'LATE' ? '09:30' : '08:00')}
+                              onChange={(e) => setModalAttForm({ ...modalAttForm, checkInTime: e.target.value })}
+                              required
+                              style={{
+                                padding: '8px 14px',
+                                borderRadius: '8px',
+                                border: '1px solid #059669',
+                                fontSize: '1.1rem',
+                                fontWeight: 700,
+                                background: '#ffffff',
+                                color: '#065f46',
+                              }}
+                            />
+                            <div style={{ fontSize: '0.78rem', color: '#065f46' }}>
+                              Specify arrival time for this historical record (e.g. 08:00 or 08:30).
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '0.74rem', color: '#047857', marginTop: '10px' }}>
+                            Step 1 of 2: Records arrival on {formatDate(selectedDate)}.
+                          </div>
                         </div>
-                      </div>
+                      )
                     ) : (
                       <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', fontSize: '0.82rem', color: '#991b1b' }}>
                         Time In / Time Out hours are not applicable when status is <b>{modalAttForm.status}</b>. Record will be finalized directly.
@@ -2915,36 +3756,67 @@ export default function EmployeeManagerDashboard() {
                     </div>
 
                     {/* Time Out Picker */}
-                    <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
-                      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#92400e', marginBottom: '8px' }}>
-                        Departure Timestamp (Time Out) — FROZEN TO CURRENT TIME:
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-                        <div style={{
-                          padding: '10px 18px',
-                          borderRadius: '8px',
-                          border: '1px solid #d97706',
-                          fontSize: '1.35rem',
-                          fontWeight: 800,
-                          background: '#ffffff',
-                          color: '#92400e',
-                          fontFamily: 'monospace',
-                          letterSpacing: '1px',
-                        }}>
-                          {getCurrentTimeStr()}
+                    {selectedDate === today ? (
+                      <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#92400e', marginBottom: '8px' }}>
+                          Departure Timestamp (Time Out) — FROZEN TO CURRENT TIME:
                         </div>
-                        <div style={{ fontSize: '0.85rem', color: '#92400e', fontWeight: 700 }}>
-                          Live System Clock: <b>{currentTimeDisplay}</b>
-                          <div style={{ fontSize: '0.75rem', fontWeight: 500, color: '#92400e', marginTop: '2px' }}>
-                            Time is permanently locked to current departure time.
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                          <div style={{
+                            padding: '10px 18px',
+                            borderRadius: '8px',
+                            border: '1px solid #d97706',
+                            fontSize: '1.35rem',
+                            fontWeight: 800,
+                            background: '#ffffff',
+                            color: '#92400e',
+                            fontFamily: 'monospace',
+                            letterSpacing: '1px',
+                          }}>
+                            {getCurrentTimeStr()}
+                          </div>
+                          <div style={{ fontSize: '0.85rem', color: '#92400e', fontWeight: 700 }}>
+                            Live System Clock: <b>{currentTimeDisplay}</b>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 500, color: '#92400e', marginTop: '2px' }}>
+                              Time is permanently locked to current departure time.
+                            </div>
                           </div>
                         </div>
+                        <div style={{ fontSize: '0.74rem', color: '#92400e', marginTop: '10px' }}>
+                          Step 2 of 2: Records departure and permanently completes today's work shift.
+                        </div>
                       </div>
-                      <div style={{ fontSize: '0.74rem', color: '#92400e', marginTop: '10px' }}>
-                        Step 2 of 2: Records departure and permanently completes today's work shift.
+                    ) : (
+                      <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+                        <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, color: '#92400e', marginBottom: '8px' }}>
+                          Departure Timestamp (Time Out) for {formatDate(selectedDate)}:
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                          <input
+                            type="time"
+                            value={modalAttForm.checkOutTime || '17:00'}
+                            onChange={(e) => setModalAttForm({ ...modalAttForm, checkOutTime: e.target.value })}
+                            required
+                            style={{
+                              padding: '8px 14px',
+                              borderRadius: '8px',
+                              border: '1px solid #d97706',
+                              fontSize: '1.1rem',
+                              fontWeight: 700,
+                              background: '#ffffff',
+                              color: '#92400e',
+                            }}
+                          />
+                          <div style={{ fontSize: '0.78rem', color: '#92400e' }}>
+                            Specify departure time for this historical shift (e.g. 17:00).
+                          </div>
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: '#92400e', marginTop: '10px' }}>
+                          Step 2 of 2: Completes shift on {formatDate(selectedDate)}.
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     {/* Remarks on Check-out */}
                     <div style={{ marginBottom: '20px' }}>
@@ -3012,6 +3884,137 @@ export default function EmployeeManagerDashboard() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Daily QR Code Printable Signage Modal */}
+        {showQrPrintModal && todayQr?.hasActiveQr && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}>
+            <div style={{
+              background: '#ffffff',
+              borderRadius: '16px',
+              maxWidth: '560px',
+              width: '100%',
+              padding: '32px',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)',
+              textAlign: 'center',
+            }}>
+              {/* Printable Area */}
+              <div id="printable-qr-signage" style={{ border: '3px solid #047857', borderRadius: '12px', padding: '28px 20px', background: '#ffffff' }}>
+                <div style={{ fontSize: '0.82rem', fontWeight: 800, letterSpacing: '0.1em', color: '#047857', textTransform: 'uppercase' }}>
+                  ODILIYA HOMES &amp; REAL ESTATE
+                </div>
+                <h2 style={{ margin: '6px 0 2px', fontSize: '1.5rem', fontWeight: 900, color: '#111827' }}>
+                  DAILY SITE ATTENDANCE
+                </h2>
+                <div style={{ fontSize: '0.88rem', color: '#4b5563', fontWeight: 600 }}>
+                  Date: <span style={{ color: '#047857', fontWeight: 800 }}>{formatDate(todayQr.date)}</span>
+                </div>
+
+                <div style={{
+                  margin: '20px auto',
+                  padding: '16px',
+                  background: '#ffffff',
+                  display: 'inline-block',
+                  borderRadius: '12px',
+                  border: '2px solid #e5e7eb',
+                  boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'
+                }}>
+                  <QRCodeSVG
+                    value={JSON.stringify({
+                      company: 'Odiliya',
+                      purpose: 'ATTENDANCE',
+                      token: todayQr.codeToken,
+                      date: todayQr.date,
+                      expiresAt: todayQr.expiresAt,
+                    })}
+                    size={260}
+                    level="H"
+                    includeMargin={false}
+                  />
+                </div>
+
+                <div style={{
+                  background: '#f8fafc',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  fontSize: '0.82rem',
+                  fontFamily: 'monospace',
+                  fontWeight: 800,
+                  color: '#111827',
+                  letterSpacing: '0.05em',
+                  marginBottom: '14px',
+                  display: 'inline-block'
+                }}>
+                  Token: {todayQr.codeToken}
+                </div>
+
+                <div style={{
+                  background: '#ecfdf5',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #a7f3d0',
+                  fontSize: '0.82rem',
+                  color: '#065f46',
+                  fontWeight: 700,
+                  marginBottom: '12px'
+                }}>
+                  Scan with your Employee Portal to record Check-In &amp; Check-Out.
+                </div>
+
+                <div style={{ fontSize: '0.75rem', color: '#991b1b', fontWeight: 700 }}>
+                  ⚠️ Strictly valid today until 11:59:59 PM only.
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div style={{ marginTop: '20px', display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  style={{
+                    padding: '10px 24px',
+                    background: '#047857',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontWeight: 700,
+                    fontSize: '0.9rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span>🖨️</span> Print Poster Now
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowQrPrintModal(false)}
+                  style={{
+                    padding: '10px 20px',
+                    background: '#f3f4f6',
+                    color: '#374151',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    fontWeight: 600,
+                    fontSize: '0.9rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         )}

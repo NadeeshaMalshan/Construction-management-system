@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800" fill="none">
+  <defs>
+    <!-- Subtle CAD Grid Pattern -->
+    <pattern id="cadGrid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#09543b" stroke-width="0.5" stroke-opacity="0.035" />
+      <circle cx="40" cy="40" r="1" fill="#09543b" fill-opacity="0.06" />
+    </pattern>
+    <pattern id="majorGrid" width="200" height="200" patternUnits="userSpaceOnUse">
+      <rect width="200" height="200" fill="none" stroke="#09543b" stroke-width="0.8" stroke-opacity="0.06" stroke-dasharray="4,4" />
+      <path d="M 0 10 L 10 0 M 200 10 L 190 0 M 0 190 L 10 200 M 200 190 L 190 200" stroke="#c5a059" stroke-width="0.8" stroke-opacity="0.08" />
+    </pattern>
+  </defs>
+
+  <!-- Background Base Canvas -->
+  <rect width="800" height="800" fill="#f8fafc" />
+  <rect width="800" height="800" fill="url(#cadGrid)" />
+  <rect width="800" height="800" fill="url(#majorGrid)" />
+
+  <!-- Modern Luxury Architectural Wireframe Motif (Elevation & Geometry) -->
+  <g opacity="0.06" stroke="#09543b" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Isometric Villa & Rooftop Wireframe Structure -->
+    <polygon points="120,240 280,150 440,240 280,330" fill="none" stroke="#09543b" stroke-dasharray="6,3" />
+    <polygon points="120,400 280,310 440,400 280,490" fill="none" stroke="#09543b" />
+    <line x1="120" y1="240" x2="120" y2="400" />
+    <line x1="280" y1="330" x2="280" y2="490" />
+    <line x1="440" y1="240" x2="440" y2="400" />
+    <line x1="280" y1="150" x2="280" y2="310" stroke-dasharray="4,4" />
+
+    <!-- Balcony & Modern Glass Cantilever -->
+    <polygon points="280,310 380,255 420,280 320,335" fill="none" stroke="#c5a059" stroke-width="1.5" />
+    <line x1="320" y1="335" x2="320" y2="390" stroke="#c5a059" />
+    <line x1="420" y1="280" x2="420" y2="335" stroke="#c5a059" />
+
+    <!-- Architectural Dimension Lines & Extension Ticks -->
+    <line x1="90" y1="240" x2="90" y2="400" stroke="#c5a059" stroke-width="1" />
+    <line x1="82" y1="240" x2="98" y2="240" stroke="#c5a059" stroke-width="1" />
+    <line x1="82" y1="400" x2="98" y2="400" stroke="#c5a059" stroke-width="1" />
+    <line x1="85" y1="245" x2="95" y2="235" stroke="#c5a059" stroke-width="1.5" />
+    <line x1="85" y1="405" x2="95" y2="395" stroke="#c5a059" stroke-width="1.5" />
+
+    <!-- Secondary CAD Floor Plan Layout Outline (Right Quadrant) -->
+    <rect x="520" y="160" width="220" height="180" rx="4" fill="none" stroke="#09543b" stroke-width="1" />
+    <line x1="520" y1="240" x2="740" y2="240" stroke="#09543b" stroke-dasharray="8,4" />
+    <line x1="620" y1="160" x2="620" y2="340" stroke="#09543b" stroke-dasharray="8,4" />
+    
+    <!-- Architectural Swing Door Arc -->
+    <path d="M 620,240 A 40,40 0 0,1 660,200" stroke="#09543b" stroke-width="0.9" stroke-dasharray="3,3" />
+    <line x1="620" y1="240" x2="620" y2="200" stroke="#09543b" stroke-width="1.2" />
+
+    <!-- Structural Column Markers -->
+    <rect x="517" y="157" width="6" height="6" fill="#09543b" />
+    <rect x="737" y="157" width="6" height="6" fill="#09543b" />
+    <rect x="517" y="337" width="6" height="6" fill="#09543b" />
+    <rect x="737" y="337" width="6" height="6" fill="#09543b" />
+    <rect x="617" y="237" width="6" height="6" fill="#c5a059" />
+
+    <!-- Compass Rose / Surveying Meridian Guide (Bottom Left) -->
+    <circle cx="200" cy="640" r="50" stroke="#c5a059" stroke-width="0.8" />
+    <circle cx="200" cy="640" r="42" stroke="#09543b" stroke-width="0.5" stroke-dasharray="2,2" />
+    <line x1="200" y1="580" x2="200" y2="700" stroke="#09543b" stroke-width="1" />
+    <line x1="140" y1="640" x2="260" y2="640" stroke="#09543b" stroke-width="1" />
+    <polygon points="200,580 196,620 204,620" fill="#09543b" />
+
+    <!-- Engineering Structural Truss Angles (Bottom Right) -->
+    <line x1="480" y1="680" x2="720" y2="680" stroke="#09543b" stroke-width="1.5" />
+    <line x1="480" y1="680" x2="600" y2="560" stroke="#09543b" stroke-width="1.2" />
+    <line x1="600" y1="560" x2="720" y2="680" stroke="#09543b" stroke-width="1.2" />
+    <line x1="600" y1="560" x2="600" y2="680" stroke="#c5a059" stroke-width="1" stroke-dasharray="4,2" />
+    <line x1="540" y1="620" x2="600" y2="680" stroke="#09543b" stroke-width="0.9" />
+    <line x1="660" y1="620" x2="600" y2="680" stroke="#09543b" stroke-width="0.9" />
+  </g>
+</svg>

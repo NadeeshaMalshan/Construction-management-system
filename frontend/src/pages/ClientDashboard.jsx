@@ -13,8 +13,11 @@ import {
   getInquiries,
   createInquiry,
   sendInquiryMessage,
+  clientAcceptInquiry,
+  markInquiryPaid,
   getProjectRequests,
   createProjectRequest,
+  markProjectRequestPaid,
   getDocuments,
   uploadDocument,
   getNotifications,
@@ -32,7 +35,15 @@ import {
   formatDate,
   formatMoney,
 } from '../services/api';
-import { downloadFile, exportCsv } from '../utils/documentDownload';
+import { downloadFile, exportCsv, downloadPaymentInvoice } from '../utils/documentDownload';
+
+const getTodayDateString = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -121,6 +132,8 @@ export default function ClientDashboard() {
   const [receiptViewModal, setReceiptViewModal] = useState(null);
   const [payForm, setPayForm] = useState({
     projectId: '',
+    projectRequestId: '',
+    inquiryId: '',
     amount: '',
     paymentDate: new Date().toISOString().slice(0, 10),
     paymentMethod: 'BANK_TRANSFER',
@@ -173,6 +186,8 @@ export default function ClientDashboard() {
   });
   const [savingProfile, setSavingProfile] = useState(false);
 
+  const [inquiryType, setInquiryType] = useState('CUSTOM'); // 'CUSTOM', 'CATALOG', 'GENERAL'
+  const [inquiryDesignId, setInquiryDesignId] = useState('');
   const [inquirySubject, setInquirySubject] = useState('');
   const [inquiryMessage, setInquiryMessage] = useState('');
   const [inquiryProjectId, setInquiryProjectId] = useState('');
@@ -440,6 +455,31 @@ export default function ClientDashboard() {
     }
   };
 
+  const handleProceedToPaymentFromRequest = (req, isCard = false) => {
+    fetchBankDetails();
+    setReceiptFile(null);
+    const estimatedTotal = req.pmEstimatedBudget ? Number(req.pmEstimatedBudget) : (req.expectedBudget ? Number(req.expectedBudget) : 0);
+    const initialDownPayment = estimatedTotal > 0 ? (estimatedTotal * 0.2).toFixed(2) : '';
+    setPayForm({
+      projectId: '',
+      projectRequestId: String(req.id),
+      inquiryId: '',
+      amount: initialDownPayment ? String(initialDownPayment) : '',
+      paymentDate: new Date().toISOString().slice(0, 10),
+      paymentMethod: isCard ? 'Credit / Debit Card' : 'Bank Transfer',
+      referenceNumber: '',
+      notes: `Down payment for approved ${req.isCustomDesign ? 'custom design' : 'catalog project'}: ${req.title} (Request #${req.id})`,
+    });
+    setPaymentMode(isCard ? 'card' : 'bank');
+    setCardErrors({ cardNumber: '', cardHolder: '', expiry: '', cvv: '' });
+    if (isCard) {
+      setActiveTab('card-checkout');
+    } else {
+      setActiveTab('downpayments');
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleOpenCardGateway = (e) => {
     e.preventDefault();
     if (!payForm.amount || Number(payForm.amount) <= 0) {
@@ -481,7 +521,16 @@ export default function ClientDashboard() {
       }
 
       const chosenProj = projects.find(p => p.id === Number(payForm.projectId));
+      const chosenInq = inquiries.find(i => i.id === Number(payForm.inquiryId));
+      const chosenReq = projectRequests.find(r => r.id === Number(payForm.projectRequestId));
       const refNum = payForm.referenceNumber.trim() || `TXN-${Date.now().toString().slice(-8)}`;
+      const projBudget = chosenProj?.budget
+        ? Number(chosenProj.budget)
+        : (chosenReq?.pmEstimatedBudget
+          ? Number(chosenReq.pmEstimatedBudget)
+          : (chosenReq?.expectedBudget
+            ? Number(chosenReq.expectedBudget)
+            : (chosenInq?.pmEstimatedBudget ? Number(chosenInq.pmEstimatedBudget) : (chosenInq?.design?.budget ? Number(chosenInq.design.budget) : null))));
 
       await createDownPayment({
         client: { id: clientProfile.id },
@@ -492,12 +541,40 @@ export default function ClientDashboard() {
         status: 'Pending',
         referenceNumber: refNum,
         notes: payForm.notes.trim() || null,
-        totalProjectAmount: chosenProj?.budget ? Number(chosenProj.budget) : null,
-        requiredDownPayment: chosenProj?.budget ? Number((chosenProj.budget * 0.2).toFixed(2)) : null,
+        totalProjectAmount: projBudget,
+        requiredDownPayment: projBudget ? Number((projBudget * 0.2).toFixed(2)) : null,
         receipt: receiptData,
         receiptFileName,
         receiptFileType,
       });
+
+      if (payForm.projectRequestId) {
+        try {
+          await markProjectRequestPaid(payForm.projectRequestId, {
+            amount: Number(payForm.amount),
+            refNumber: refNum,
+            paymentMethod: 'Bank Transfer',
+          });
+          const reqData = await getProjectRequests(clientProfile.id);
+          setProjectRequests(reqData || []);
+        } catch (reqErr) {
+          console.warn('Could not update project request payment status:', reqErr);
+        }
+      }
+
+      if (payForm.inquiryId) {
+        try {
+          await markInquiryPaid(payForm.inquiryId, {
+            amount: Number(payForm.amount),
+            refNumber: refNum,
+            paymentMethod: 'Bank Transfer',
+          });
+          const inqData = await getInquiries(clientProfile.id);
+          setInquiries(inqData || []);
+        } catch (inqErr) {
+          console.warn('Could not update inquiry payment status:', inqErr);
+        }
+      }
 
       // Refresh notifications immediately
       const notifs = await getNotifications(clientProfile.id);
@@ -517,7 +594,7 @@ export default function ClientDashboard() {
         open: true,
         txnRef: refNum,
         amount: Number(payForm.amount),
-        projectName: chosenProj?.name || 'General Project Down Payment',
+        projectName: chosenProj?.name || (chosenReq ? `${chosenReq.isCustomDesign ? 'Custom Design' : 'Catalog Request'} #${chosenReq.id}: ${chosenReq.title}` : (chosenInq ? `Inquiry #${chosenInq.id}: ${chosenInq.subject}` : 'General Project Down Payment')),
         date: payForm.paymentDate,
         paymentMethod: 'Online Bank Transfer',
         message: 'Your bank transfer receipt has been submitted to your Client Manager. Your payment status will remain Pending until your Client Manager checks and accepts it. Once accepted, your payment will be marked as Completed.'
@@ -557,20 +634,32 @@ export default function ClientDashboard() {
     setSendingInquiry(true);
     setError('');
     try {
+      const designObj = inquiryType === 'CATALOG' && inquiryDesignId ? { id: Number(inquiryDesignId) } : null;
+      let finalSubject = inquirySubject.trim();
+      if (inquiryType === 'CUSTOM' && !finalSubject.toLowerCase().includes('custom')) {
+        finalSubject = `Customized Design Inquiry: ${finalSubject}`;
+      } else if (inquiryType === 'CATALOG' && !finalSubject.toLowerCase().includes('catalog')) {
+        const d = (allShowcaseProjects || []).find((p) => String(p.id) === String(inquiryDesignId));
+        finalSubject = `Catalog Design Inquiry: ${d ? d.name : finalSubject}`;
+      }
+
       await createInquiry({
         client: { id: clientProfile.id },
         project: inquiryProjectId ? { id: Number(inquiryProjectId) } : null,
-        subject: inquirySubject.trim(),
+        design: designObj,
+        subject: finalSubject,
         message: inquiryMessage.trim(),
         attachmentName: inquiryAttachment?.name || null,
         attachmentType: inquiryAttachment?.type || null,
         attachmentData: inquiryAttachment ? await readFileAsDataUrl(inquiryAttachment) : null,
+        initiatedBy: 'CLIENT',
       });
       setInquirySubject('');
       setInquiryMessage('');
       setInquiryProjectId('');
+      setInquiryDesignId('');
       setInquiryAttachment(null);
-      setSuccessMsg('Your inquiry has been submitted! Our project team will respond promptly.');
+      setSuccessMsg('Your design inquiry has been submitted! Our project team will review it promptly.');
       const inqData = await getInquiries(clientProfile.id);
       setInquiries(inqData);
       setTimeout(() => setSuccessMsg(''), 4000);
@@ -604,7 +693,7 @@ export default function ClientDashboard() {
         message: designInquiryMessage.trim(),
         initiatedBy: 'CLIENT',
       });
-      setSuccessMsg(`Your inquiry for "${designInquiryTarget.name}" has been sent directly to the Client Manager!`);
+      setSuccessMsg(`Your inquiry for "${designInquiryTarget.name}" has been sent directly to the Project Manager!`);
       setDesignInquiryModalOpen(false);
       setDesignInquiryTarget(null);
       setDesignInquiryMessage('');
@@ -612,7 +701,7 @@ export default function ClientDashboard() {
       setInquiries(inqData);
       setTimeout(() => setSuccessMsg(''), 4500);
     } catch (err) {
-      setError(err.message || 'Failed to submit inquiry to Client Manager');
+      setError(err.message || 'Failed to submit inquiry to Project Manager');
     } finally {
       setSendingDesignInquiry(false);
     }
@@ -629,16 +718,59 @@ export default function ClientDashboard() {
         senderName: clientProfile?.name || 'Client',
         message: clientReplyText.trim(),
       });
-      setSuccessMsg('Your reply has been sent to the Client Manager!');
+      setSuccessMsg('Your reply has been sent to the Project Manager!');
       setClientReplyingId(null);
       setClientReplyText('');
       const inqData = await getInquiries(clientProfile.id);
       setInquiries(inqData);
       setTimeout(() => setSuccessMsg(''), 4500);
     } catch (err) {
-      setError(err.message || 'Failed to send reply to Client Manager');
+      setError(err.message || 'Failed to send reply to Project Manager');
     } finally {
       setSendingClientReply(false);
+    }
+  };
+
+  const handleClientAcceptInquiry = async (inquiryId) => {
+    setError('');
+    try {
+      await clientAcceptInquiry(inquiryId);
+      setSuccessMsg('Project quotation and terms accepted! You can now proceed to make your initial down payment.');
+      setTimeout(() => setSuccessMsg(''), 5000);
+      if (clientProfile?.id) {
+        const inqs = await getInquiries(clientProfile.id);
+        setInquiries(inqs || []);
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to accept project quotation.');
+    }
+  };
+
+  const handleProceedToPaymentFromInquiry = async (inq, autoAccept = false) => {
+    setError('');
+    try {
+      if (autoAccept && !inq.clientAccepted) {
+        await clientAcceptInquiry(inq.id);
+      }
+      const budget = inq.pmEstimatedBudget || inq.design?.budget || 0;
+      const downPayAmount = budget > 0 ? (budget * 0.2).toFixed(2) : '';
+      setPayForm((prev) => ({
+        ...prev,
+        inquiryId: inq.id,
+        projectId: inq.project?.id || '',
+        amount: downPayAmount,
+        notes: `Initial 20% Down Payment for Inquiry #${inq.id}: ${inq.subject}`,
+      }));
+      setActiveTab('downpayments');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setSuccessMsg(`Payment form pre-filled with 20% down payment (LKR ${Number(downPayAmount || 0).toLocaleString()}) for "${inq.subject}". Select Card or Bank Transfer below to complete.`);
+      setTimeout(() => setSuccessMsg(''), 6000);
+      if (clientProfile?.id) {
+        const inqs = await getInquiries(clientProfile.id);
+        setInquiries(inqs || []);
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to prepare payment for project inquiry.');
     }
   };
 
@@ -677,6 +809,7 @@ export default function ClientDashboard() {
     try {
       const payload = {
         client: { id: clientProfile.id },
+        isCustomDesign: true,
         title: customRequestForm.title.trim(),
         category: customRequestForm.category,
         location: customRequestForm.location.trim(),
@@ -688,7 +821,20 @@ export default function ClientDashboard() {
       };
 
       await createProjectRequest(payload);
-      setSuccessMsg('Your custom project request has been submitted to the Client Manager! Our team will review and consult with Project Engineering.');
+      try {
+        await createInquiry({
+          client: { id: clientProfile.id },
+          subject: `Customized Design Inquiry: ${customRequestForm.title.trim()}`,
+          message: `Custom design request for ${customRequestForm.title.trim()} (${customRequestForm.category}) at ${customRequestForm.location.trim()}.\nBudget: ${customRequestForm.expectedBudget || 'Flexible'}.\nSpecs: ${customRequestForm.specifications || 'N/A'}.\nRequirements: ${customRequestForm.description.trim()}`,
+          attachmentName: customRequestImages.length > 0 ? 'custom-design-plan.png' : null,
+          attachmentType: customRequestImages.length > 0 ? 'image/png' : null,
+          attachmentData: customRequestImages.length > 0 ? customRequestImages[0] : null,
+          initiatedBy: 'CLIENT',
+        });
+      } catch (inqErr) {
+        console.warn('Could not record client inquiry mirror:', inqErr);
+      }
+      setSuccessMsg('Your custom design request has been submitted directly to the Project Manager! Our engineering team will review technical feasibility and advise on down payment.');
       setCustomRequestForm({
         title: '',
         category: 'RESIDENCIES',
@@ -740,6 +886,17 @@ export default function ClientDashboard() {
       };
 
       await createProjectRequest(payload);
+      try {
+        await createInquiry({
+          client: { id: clientProfile.id },
+          design: { id: designRequestModal.id },
+          subject: `Catalog Design Inquiry: ${designRequestModal.name}`,
+          message: designRequestForm.customNotes.trim() || `Inquiry regarding company design: ${designRequestModal.name}`,
+          initiatedBy: 'CLIENT',
+        });
+      } catch (inqErr) {
+        console.warn('Could not record client inquiry mirror:', inqErr);
+      }
       setSuccessMsg(`Your project request for "${designRequestModal.name}" has been submitted to the Client Manager!`);
       setDesignRequestModal(null);
       setRequestProjectMode('history');
@@ -893,8 +1050,17 @@ export default function ClientDashboard() {
       await new Promise(r => setTimeout(r, 1200));
 
       const chosenProj = projects.find(p => p.id === Number(payForm.projectId));
+      const chosenInq = inquiries.find(i => i.id === Number(payForm.inquiryId));
+      const chosenReq = projectRequests.find(r => r.id === Number(payForm.projectRequestId));
       const txnRef = `ODL-CC-${Date.now().toString().slice(-8)}`;
       const todayDate = new Date().toISOString().slice(0, 10);
+      const projBudget = chosenProj?.budget
+        ? Number(chosenProj.budget)
+        : (chosenReq?.pmEstimatedBudget
+          ? Number(chosenReq.pmEstimatedBudget)
+          : (chosenReq?.expectedBudget
+            ? Number(chosenReq.expectedBudget)
+            : (chosenInq?.pmEstimatedBudget ? Number(chosenInq.pmEstimatedBudget) : (chosenInq?.design?.budget ? Number(chosenInq.design.budget) : null))));
 
       await createDownPayment({
         client: { id: clientProfile.id },
@@ -905,12 +1071,40 @@ export default function ClientDashboard() {
         status: 'Valid',
         referenceNumber: txnRef,
         notes: (payForm.notes || '').trim() || `Card Payment via Odiliya Secure Gateway (Card ending ${cleanNum.slice(-4)})`,
-        totalProjectAmount: chosenProj?.budget ? Number(chosenProj.budget) : null,
-        requiredDownPayment: chosenProj?.budget ? Number((chosenProj.budget * 0.2).toFixed(2)) : null,
+        totalProjectAmount: projBudget,
+        requiredDownPayment: projBudget ? Number((projBudget * 0.2).toFixed(2)) : null,
         receipt: null,
         receiptFileName: null,
         receiptFileType: null,
       });
+
+      if (payForm.projectRequestId) {
+        try {
+          await markProjectRequestPaid(payForm.projectRequestId, {
+            amount: Number(payForm.amount),
+            refNumber: txnRef,
+            paymentMethod: 'Credit / Debit Card',
+          });
+          const reqData = await getProjectRequests(clientProfile.id);
+          setProjectRequests(reqData || []);
+        } catch (reqErr) {
+          console.warn('Could not update project request payment status:', reqErr);
+        }
+      }
+
+      if (payForm.inquiryId) {
+        try {
+          await markInquiryPaid(payForm.inquiryId, {
+            amount: Number(payForm.amount),
+            refNumber: txnRef,
+            paymentMethod: 'Credit / Debit Card',
+          });
+          const inqData = await getInquiries(clientProfile.id);
+          setInquiries(inqData || []);
+        } catch (inqErr) {
+          console.warn('Could not update inquiry payment status:', inqErr);
+        }
+      }
 
       // Refresh notifications immediately so the client receives the confirmation message
       const notifs = await getNotifications(clientProfile.id);
@@ -931,7 +1125,7 @@ export default function ClientDashboard() {
         open: true,
         txnRef,
         amount: Number(payForm.amount),
-        projectName: chosenProj?.name || 'General Project Down Payment',
+        projectName: chosenProj?.name || (chosenReq ? `${chosenReq.isCustomDesign ? 'Custom Design' : 'Catalog Request'} #${chosenReq.id}: ${chosenReq.title}` : (chosenInq ? `Inquiry #${chosenInq.id}: ${chosenInq.subject}` : 'General Project Down Payment')),
         date: todayDate,
         paymentMethod: `Credit / Debit Card (${getCardBrand(cardForm.cardNumber)} •••• ${cleanNum.slice(-4)})`,
         message: 'Your card payment has been authorized and completed successfully! An official confirmation message has been delivered to your in-app notifications.'
@@ -1036,6 +1230,8 @@ export default function ClientDashboard() {
             <span>Inquiries ({inquiries.length})</span>
           </button>
 
+
+
           <button
             type="button"
             className={`tab-btn-item ${activeTab === 'documents' ? 'active' : ''}`}
@@ -1065,6 +1261,59 @@ export default function ClientDashboard() {
         {/* TAB 1: OVERVIEW & MILESTONES */}
         {activeTab === 'overview' && (
           <div>
+            {/* APPROVED REQUEST BANNER ON OVERVIEW */}
+            {projectRequests.filter(r => r.status === 'APPROVED' && !r.downPaymentPaid && !r.startedProjectId).length > 0 && (
+              <div style={{
+                background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
+                border: '2px solid #16a34a',
+                borderRadius: '12px',
+                padding: '1.25rem 1.5rem',
+                marginBottom: '1.5rem',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '1rem',
+                boxShadow: '0 4px 14px rgba(22, 163, 74, 0.12)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                  <span style={{ fontSize: '2rem' }}>🎉</span>
+                  <div>
+                    <strong style={{ color: '#15803d', fontSize: '1.1rem', display: 'block' }}>
+                      Project Request Approved by Project Manager!
+                    </strong>
+                    <span style={{ color: '#166534', fontSize: '0.9rem' }}>
+                      {projectRequests.filter(r => r.status === 'APPROVED' && !r.downPaymentPaid && !r.startedProjectId).length} request(s) officially approved. You can now pay your initial 20% down payment to confirm construction scheduling.
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn-solid-green"
+                    style={{ padding: '0.7rem 1.4rem', fontWeight: 700, fontSize: '0.92rem' }}
+                    onClick={() => {
+                      const firstApproved = projectRequests.find(r => r.status === 'APPROVED' && !r.downPaymentPaid && !r.startedProjectId);
+                      if (firstApproved) handleProceedToPaymentFromRequest(firstApproved, true);
+                    }}
+                  >
+                    💳 Pay Down Payment Now →
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-outline-green"
+                    style={{ padding: '0.7rem 1.2rem', fontWeight: 600, fontSize: '0.9rem', background: '#fff' }}
+                    onClick={() => {
+                      setRequestProjectMode('history');
+                      setActiveTab('request-project');
+                    }}
+                  >
+                    View Request Details
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="light-kpi-row">
               <div className="light-kpi-card">
                 <div>
@@ -1274,6 +1523,28 @@ export default function ClientDashboard() {
                 <p className="company-design-details__description">{selectedDesign.description || 'Contact our Client Manager for the full design specification and availability.'}</p>
                 {selectedDesign.specifications && <p><strong>Specifications:</strong> {selectedDesign.specifications}</p>}
                 <p><strong>Starting from:</strong> {selectedDesign.priceRange || formatMoney(selectedDesign.budget)}</p>
+                <div style={{ marginTop: '1.25rem', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn-solid-green"
+                    onClick={() => {
+                      setInquiryType('CATALOG');
+                      setInquiryDesignId(String(selectedDesign.id));
+                      setInquirySubject(`Catalog Design Inquiry: ${selectedDesign.name}`);
+                      setInquiryMessage(`Hello, I would like to inquire about details for ${selectedDesign.name} (${selectedDesign.category}). Could you please share the breakdown of costs, blueprint options, and project timeline?`);
+                      setActiveTab('inquiries');
+                    }}
+                  >
+                    💬 Ask Details from Project Manager
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-outline-green"
+                    onClick={() => handleOpenDesignInquiry(selectedDesign)}
+                  >
+                    Send Quick Inquiry
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -1418,7 +1689,7 @@ export default function ClientDashboard() {
                                 <small>Starting Budget</small>
                                 <strong>{p.priceRange || (p.budget ? formatMoney(p.budget) : 'Custom Quote')}</strong>
                               </div>
-                              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                 <button
                                   type="button"
                                   className="btn-outline-green"
@@ -1429,6 +1700,20 @@ export default function ClientDashboard() {
                                   }}
                                 >
                                   Details
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-outline-green"
+                                  style={{ padding: '0.45rem 0.8rem', fontSize: '0.82rem' }}
+                                  onClick={() => {
+                                    setInquiryType('CATALOG');
+                                    setInquiryDesignId(String(p.id));
+                                    setInquirySubject(`Catalog Design Inquiry: ${p.name}`);
+                                    setInquiryMessage(`Hello, I would like to inquire about details for ${p.name} (${p.category}). Could you provide architectural specifications, customization options, and cost breakdown?`);
+                                    setActiveTab('inquiries');
+                                  }}
+                                >
+                                  💬 Ask Details
                                 </button>
                                 <button
                                   type="button"
@@ -1524,6 +1809,7 @@ export default function ClientDashboard() {
                       <label>Target Construction Start Date (Optional)</label>
                       <input
                         type="date"
+                        min={getTodayDateString()}
                         value={customRequestForm.targetStartDate}
                         onChange={(e) => setCustomRequestForm({ ...customRequestForm, targetStartDate: e.target.value })}
                       />
@@ -1683,6 +1969,8 @@ export default function ClientDashboard() {
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1rem' }}>
                     {projectRequests.map((req) => {
+                      const isCustom = req.isCustomDesign || !req.selectedDesign;
+                      const isPendingPm = req.status === 'PENDING_PM_REVIEW';
                       const isPendingCm = req.status === 'PENDING_CM_REVIEW';
                       const isForwardedPm = req.status === 'FORWARDED_TO_PM';
                       const isPmReviewed = req.status === 'PM_REVIEWED';
@@ -1704,13 +1992,25 @@ export default function ClientDashboard() {
                           {/* Header */}
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
                             <div>
-                              <span className="brand-green-subtitle" style={{ fontSize: '0.8rem' }}>{req.category}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                <span className="brand-green-subtitle" style={{ fontSize: '0.8rem' }}>{req.category}</span>
+                                {isCustom ? (
+                                  <span style={{ background: '#fdf2f8', color: '#9d174d', border: '1px solid #fbcfe8', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700 }}>
+                                    Client's Own Custom Design
+                                  </span>
+                                ) : (
+                                  <span style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                                    Company Design Catalog
+                                  </span>
+                                )}
+                              </div>
                               <h4 style={{ margin: '0.2rem 0', fontSize: '1.25rem', color: '#0f172a' }}>{req.title}</h4>
                               <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                                 {req.location || 'Location not specified'} &nbsp;|&nbsp; Submitted on {formatDate(req.createdAt)}
                               </p>
                             </div>
                             <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                              {isPendingPm && <span className="pill-badge active" style={{ background: '#ede9fe', color: '#6d28d9', fontWeight: 700 }}>Under PM Review</span>}
                               {isPendingCm && <span className="pill-badge warning">Pending Client Manager</span>}
                               {isForwardedPm && <span className="pill-badge active">Engineering Review (PM)</span>}
                               {isPmReviewed && <span className="pill-badge active" style={{ background: '#dbeafe', color: '#1e40af' }}>Assessment Completed</span>}
@@ -1746,7 +2046,7 @@ export default function ClientDashboard() {
                           {/* Uploaded Photos Thumbnails */}
                           {req.imageUrls && req.imageUrls.length > 0 && (
                             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                              <small style={{ color: 'var(--text-muted)', marginRight: '0.25rem' }}>Attached Photos ({req.imageUrls.length}):</small>
+                              <small style={{ color: 'var(--text-muted)', marginRight: '0.25rem' }}>Attached Photos & Blueprints ({req.imageUrls.length}):</small>
                               {req.imageUrls.map((img, i) => (
                                 <img
                                   key={i}
@@ -1763,25 +2063,150 @@ export default function ClientDashboard() {
                           <div style={{ margin: '1.25rem 0 0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem', color: '#64748b', flexWrap: 'wrap' }}>
                             <span style={{ fontWeight: 600, color: 'var(--brand-green)' }}>1. Request Submitted</span>
                             <span>→</span>
-                            <span style={{ fontWeight: isForwardedPm || isPmReviewed || isClientNotified ? 600 : 400, color: isForwardedPm || isPmReviewed || isClientNotified ? 'var(--brand-green)' : '#94a3b8' }}>
-                              2. Forwarded to PM
+                            <span style={{ fontWeight: isPendingPm || isForwardedPm || isPmReviewed || isApproved || isStarted ? 600 : 400, color: isPendingPm || isForwardedPm || isPmReviewed || isApproved || isStarted ? 'var(--brand-green)' : '#94a3b8' }}>
+                              2. PM Review & Feasibility
                             </span>
                             <span>→</span>
-                            <span style={{ fontWeight: isPmReviewed || isClientNotified ? 600 : 400, color: isPmReviewed || isClientNotified ? 'var(--brand-green)' : '#94a3b8' }}>
-                              3. PM Review
+                            <span style={{ fontWeight: isApproved || isStarted ? 700 : 400, color: isApproved || isStarted ? '#16a34a' : '#94a3b8' }}>
+                              3. Approved (Pay Down Payment)
                             </span>
                             <span>→</span>
-                            <span style={{ fontWeight: isClientNotified ? 700 : 400, color: isClientNotified ? '#15803d' : '#94a3b8' }}>
-                              4. Client Proposal
+                            <span style={{ fontWeight: isStarted ? 700 : 400, color: isStarted ? '#047857' : '#94a3b8' }}>
+                              4. Construction Started
                             </span>
                           </div>
 
-                          {/* Official Response from Client Manager */}
-                          {req.clientMessage && (
+                          {/* APPROVED CALLOUT & DOWN PAYMENT ACTION */}
+                          {isApproved && (
+                            <div style={{
+                              marginTop: '1.25rem',
+                              padding: '1.35rem 1.5rem',
+                              background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
+                              border: '2px solid #16a34a',
+                              borderRadius: '12px',
+                              boxShadow: '0 4px 12px rgba(22, 163, 74, 0.1)',
+                            }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                  <div>
+                                    <h4 style={{ margin: 0, color: '#15803d', fontSize: '1.2rem', fontWeight: 800 }}>
+                                      {isCustom ? 'Custom Design' : 'Catalog Project Request'} Approved by Project Manager!
+                                    </h4>
+                                    <span style={{ fontSize: '0.82rem', color: '#166534' }}>
+                                      Formal Sign-off by {req.approvedBy || 'Project Manager'} on {formatDate(req.approvedAt || req.updatedAt)}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {req.downPaymentPaid ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: '#dcfce7', border: '1.5px solid #86efac', padding: '0.65rem 1.25rem', borderRadius: '8px' }}>
+                                    <span style={{ fontSize: '1.3rem' }}>💰</span>
+                                    <div>
+                                      <strong style={{ color: '#14532d', fontSize: '0.95rem', display: 'block' }}>
+                                        Initial 20% Down Payment Paid: {formatMoney(req.downPaymentAmount)}
+                                      </strong>
+                                      <small style={{ color: '#166534' }}>
+                                        Ref: #{req.downPaymentRef || 'N/A'} {req.downPaymentDate && `• Paid on ${formatDate(req.downPaymentDate)}`}
+                                      </small>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
+                                    <button
+                                      type="button"
+                                      className="btn-solid-green"
+                                      style={{
+                                        padding: '0.75rem 1.5rem',
+                                        fontSize: '0.96rem',
+                                        fontWeight: 700,
+                                        borderRadius: '8px',
+                                        boxShadow: '0 3px 10px rgba(4, 120, 87, 0.3)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px'
+                                      }}
+                                      onClick={() => handleProceedToPaymentFromRequest(req, true)}
+                                    >
+                                      💳 Pay with Card (Instant) →
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-outline-green"
+                                      style={{
+                                        padding: '0.75rem 1.4rem',
+                                        fontSize: '0.96rem',
+                                        fontWeight: 700,
+                                        borderRadius: '8px',
+                                        background: '#fff'
+                                      }}
+                                      onClick={() => handleProceedToPaymentFromRequest(req, false)}
+                                    >
+                                      🏦 Bank Transfer →
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Official message from PM to client */}
+                              {req.clientMessage ? (
+                                <div style={{
+                                  marginTop: '1rem',
+                                  padding: '1rem 1.25rem',
+                                  background: '#ffffff',
+                                  borderRadius: '8px',
+                                  border: '1px solid #bbf7d0',
+                                }}>
+                                  <strong style={{ color: '#166534', fontSize: '0.88rem', display: 'block', marginBottom: '6px' }}>
+                                    Official Message & Instructions from Project Management:
+                                  </strong>
+                                  <p style={{ margin: 0, color: '#0f172a', fontSize: '0.94rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                    {req.clientMessage}
+                                  </p>
+                                </div>
+                              ) : (
+                                <p style={{ margin: '0.75rem 0 0', color: '#166534', fontSize: '0.92rem' }}>
+                                  Please proceed with making your initial down payment so our engineering team can commence site mobilization and construction planning.
+                                </p>
+                              )}
+
+                              {/* Approved Budget & Down Payment metrics */}
+                              <div style={{
+                                marginTop: '1rem',
+                                display: 'flex',
+                                gap: '1.5rem',
+                                flexWrap: 'wrap',
+                                fontSize: '0.88rem',
+                                color: '#14532d',
+                                background: '#ffffff',
+                                padding: '0.75rem 1rem',
+                                borderRadius: '8px',
+                                border: '1px solid #dcfce7'
+                              }}>
+                                {req.pmEstimatedBudget && (
+                                  <span>
+                                    <strong>Approved Estimated Budget:</strong> {formatMoney(req.pmEstimatedBudget)}
+                                  </span>
+                                )}
+                                {req.pmEstimatedDuration && (
+                                  <span>
+                                    <strong>Estimated Duration:</strong> {req.pmEstimatedDuration}
+                                  </span>
+                                )}
+                                {req.pmEstimatedBudget && (
+                                  <span style={{ color: '#b45309', fontWeight: 800 }}>
+                                    <strong>Required Down Payment (20%):</strong> {formatMoney(Number(req.pmEstimatedBudget) * 0.2)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Official Response from Client Manager / PM if not approved state */}
+                          {!isApproved && req.clientMessage && (
                             <div style={{ marginTop: '1rem', padding: '1.25rem', background: '#f0fdf4', borderLeft: '4px solid var(--brand-green)', borderRadius: '0 8px 8px 0' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                                 <strong style={{ color: 'var(--brand-green)', fontSize: '0.95rem' }}>
-                                  Official Proposal & Response from {req.clientNotifiedBy || 'Client Manager'}:
+                                  Official Proposal & Response from {req.clientNotifiedBy || 'Engineering Team'}:
                                 </strong>
                                 <small style={{ color: 'var(--text-muted)' }}>{formatDate(req.clientNotifiedAt)}</small>
                               </div>
@@ -1800,7 +2225,7 @@ export default function ClientDashboard() {
                           {/* Rejection notice */}
                           {req.rejectionReason && (
                             <div style={{ marginTop: '0.85rem', padding: '0.85rem 1rem', background: '#fef2f2', borderLeft: '4px solid #ef4444', borderRadius: '0 8px 8px 0', fontSize: '0.9rem' }}>
-                              <strong style={{ color: '#b91c1c' }}>Rejection Reason:</strong>
+                              <strong style={{ color: '#b91c1c' }}>Rejection Reason (from {req.rejectedBy || 'Project Manager'} on {formatDate(req.rejectedAt)}):</strong>
                               <p style={{ margin: '0.2rem 0 0', color: '#7f1d1d' }}>{req.rejectionReason}</p>
                             </div>
                           )}
@@ -1898,25 +2323,96 @@ export default function ClientDashboard() {
               </div>
 
               <form onSubmit={handleSendInquiry}>
+                <div style={{ marginBottom: '1rem', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setInquiryType('CUSTOM'); setInquiryDesignId(''); if (!inquirySubject) setInquirySubject('Customized Design Inquiry'); }}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      border: inquiryType === 'CUSTOM' ? '1.5px solid #047857' : '1px solid #d1d5db',
+                      background: inquiryType === 'CUSTOM' ? '#ecfdf5' : '#fff',
+                      color: inquiryType === 'CUSTOM' ? '#047857' : '#4b5563',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ✏️ Customized Design Inquiry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setInquiryType('CATALOG'); if (!inquirySubject) setInquirySubject('Catalog Design Inquiry'); }}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      border: inquiryType === 'CATALOG' ? '1.5px solid #047857' : '1px solid #d1d5db',
+                      background: inquiryType === 'CATALOG' ? '#ecfdf5' : '#fff',
+                      color: inquiryType === 'CATALOG' ? '#047857' : '#4b5563',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🏛️ Catalog Design Inquiry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setInquiryType('GENERAL'); setInquiryDesignId(''); }}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      border: inquiryType === 'GENERAL' ? '1.5px solid #047857' : '1px solid #d1d5db',
+                      background: inquiryType === 'GENERAL' ? '#ecfdf5' : '#fff',
+                      color: inquiryType === 'GENERAL' ? '#047857' : '#4b5563',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    💬 General Inquiry
+                  </button>
+                </div>
+
                 <div className="form-grid-2">
-                  <div className="form-input-box">
-                    <label>Related Construction Project (Optional)</label>
-                    <select
-                      value={inquiryProjectId}
-                      onChange={(e) => setInquiryProjectId(e.target.value)}
-                    >
-                      <option value="">-- Choose Assigned Project (Optional) --</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name} ({p.location})</option>
-                      ))}
-                    </select>
-                  </div>
+                  {inquiryType === 'CATALOG' ? (
+                    <div className="form-input-box">
+                      <label>Select Company Catalog Design *</label>
+                      <select
+                        value={inquiryDesignId}
+                        onChange={(e) => {
+                          setInquiryDesignId(e.target.value);
+                          const chosen = (allShowcaseProjects || []).find((p) => String(p.id) === String(e.target.value));
+                          if (chosen) setInquirySubject(`Catalog Design Inquiry: ${chosen.name}`);
+                        }}
+                        required
+                      >
+                        <option value="">-- Choose Company Design Model --</option>
+                        {(allShowcaseProjects || []).map((p) => (
+                          <option key={p.id} value={p.id}>{p.name} ({p.category})</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="form-input-box">
+                      <label>Related Construction Project (Optional)</label>
+                      <select
+                        value={inquiryProjectId}
+                        onChange={(e) => setInquiryProjectId(e.target.value)}
+                      >
+                        <option value="">-- Choose Assigned Project (Optional) --</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name} ({p.location})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div className="form-input-box">
-                    <label>Subject *</label>
+                    <label>Inquiry Subject *</label>
                     <input
                       type="text"
-                      placeholder="e.g. Tile finishes query"
+                      placeholder={inquiryType === 'CUSTOM' ? 'e.g. Customized Design Inquiry: 4 Bedroom Modern Villa' : 'e.g. Catalog Design Inquiry'}
                       value={inquirySubject}
                       onChange={(e) => setInquirySubject(e.target.value)}
                       required
@@ -1991,16 +2487,44 @@ export default function ClientDashboard() {
                             )}
                           </div>
                         </div>
-                        <span className={`pill-badge ${inq.status?.toLowerCase()}`} style={{
-                          background: inq.status === 'ANSWERED' ? '#dcfce7' : '#fef3c7',
-                          color: inq.status === 'ANSWERED' ? '#15803d' : '#b45309',
-                          fontWeight: 700,
-                          fontSize: '0.78rem',
-                          border: `1px solid ${inq.status === 'ANSWERED' ? '#bbf7d0' : '#fde68a'}`,
-                          padding: '0.25rem 0.65rem',
-                        }}>
-                          {inq.status === 'ANSWERED' ? 'New Reply from Project Manager' : 'Awaiting Project Manager'}
-                        </span>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                          {inq.downPaymentPaid && (
+                            <span style={{
+                              background: '#dcfce7',
+                              color: '#15803d',
+                              fontWeight: 700,
+                              fontSize: '0.76rem',
+                              border: '1px solid #86efac',
+                              padding: '0.22rem 0.65rem',
+                              borderRadius: '12px'
+                            }}>
+                              ✓ Down Payment Paid
+                            </span>
+                          )}
+                          {inq.clientAccepted && !inq.downPaymentPaid && (
+                            <span style={{
+                              background: '#eff6ff',
+                              color: '#1d4ed8',
+                              fontWeight: 700,
+                              fontSize: '0.76rem',
+                              border: '1px solid #bfdbfe',
+                              padding: '0.22rem 0.65rem',
+                              borderRadius: '12px'
+                            }}>
+                              ✓ Proposal Accepted
+                            </span>
+                          )}
+                          <span className={`pill-badge ${inq.status?.toLowerCase()}`} style={{
+                            background: inq.status === 'ANSWERED' ? '#dcfce7' : '#fef3c7',
+                            color: inq.status === 'ANSWERED' ? '#15803d' : '#b45309',
+                            fontWeight: 700,
+                            fontSize: '0.78rem',
+                            border: `1px solid ${inq.status === 'ANSWERED' ? '#bbf7d0' : '#fde68a'}`,
+                            padding: '0.25rem 0.65rem',
+                          }}>
+                            {inq.status === 'ANSWERED' ? 'New Reply from Project Manager' : 'Awaiting Project Manager'}
+                          </span>
+                        </div>
                       </div>
 
                       {/* Threaded Conversation History */}
@@ -2018,7 +2542,7 @@ export default function ClientDashboard() {
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span style={{ background: '#059669', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
-                                ✓ PROJECT MANAGER FEASIBILITY APPROVED
+                                PROJECT MANAGER FEASIBILITY APPROVED
                               </span>
                               <span style={{ fontSize: '0.82rem', color: '#065f46', fontWeight: 600 }}>
                                 Evaluated on {inq.pmDecisionDate ? formatDate(inq.pmDecisionDate) : 'Recently'}
@@ -2049,8 +2573,8 @@ export default function ClientDashboard() {
 
                           <div style={{ marginTop: '0.55rem', fontSize: '0.82rem', color: '#047857', background: 'rgba(16, 185, 129, 0.1)', padding: '6px 10px', borderRadius: '6px' }}>
                             {inq.contractGenerated
-                              ? '🎉 Official Contract Agreement has been prepared and linked by Client Management. You can review the contract terms under your Documents & Contracts section.'
-                              : '📋 Project Manager has confirmed technical feasibility. Client Management will generate and sign your official contract agreement shortly.'}
+                              ? 'Official Contract Agreement has been prepared and linked by Client Management. You can review the contract terms under your Contracts section.'
+                              : 'Project Manager has confirmed technical feasibility. Client Management will generate and sign your official contract agreement shortly.'}
                           </div>
                         </div>
                       ) : inq.pmDecision === 'REJECTED' ? (
@@ -2063,7 +2587,7 @@ export default function ClientDashboard() {
                         }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span style={{ background: '#dc2626', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
-                              ✕ PROJECT MANAGER FEASIBILITY: NOT FEASIBLE
+                              PROJECT MANAGER FEASIBILITY: NOT FEASIBLE
                             </span>
                             <span style={{ fontSize: '0.82rem', color: '#991b1b', fontWeight: 600 }}>
                               Decided on {inq.pmDecisionDate ? formatDate(inq.pmDecisionDate) : 'Recently'}
@@ -2091,6 +2615,163 @@ export default function ClientDashboard() {
                           <span>⏳ <strong>Project Manager Assessment:</strong> Direct engineering review and costing in progress with the Project Manager.</span>
                         </div>
                       )}
+
+                      {/* Project Proposal Acceptance & Down Payment Workflow */}
+                      {(() => {
+                        const inqBudget = inq.pmEstimatedBudget || inq.design?.budget || 0;
+                        const requiredDownPayment = inqBudget > 0 ? inqBudget * 0.2 : 0;
+
+                        if (inq.downPaymentPaid) {
+                          return (
+                            <div style={{
+                              margin: '0.85rem 0',
+                              padding: '0.85rem 1.1rem',
+                              background: '#ecfdf5',
+                              border: '1.5px solid #10b981',
+                              borderRadius: '8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              flexWrap: 'wrap',
+                              gap: '10px'
+                            }}>
+                              <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ background: '#059669', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
+                                    ✓ DOWN PAYMENT COMPLETED
+                                  </span>
+                                  <span style={{ fontSize: '0.84rem', color: '#065f46', fontWeight: 700 }}>
+                                    Initial 20% Down Payment Received
+                                  </span>
+                                </div>
+                                <div style={{ marginTop: '4px', fontSize: '0.84rem', color: '#047857' }}>
+                                  Amount: <strong>{formatMoney(inq.downPaymentAmount)}</strong> • Reference: <strong>#{inq.downPaymentRef || 'N/A'}</strong>
+                                  {inq.downPaymentDate && ` • on ${formatDate(inq.downPaymentDate)}`}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn-outline-green"
+                                style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem', background: '#fff' }}
+                                onClick={() => setActiveTab('downpayments')}
+                              >
+                                View Payment Receipts →
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        if (inq.clientAccepted) {
+                          return (
+                            <div style={{
+                              margin: '0.85rem 0',
+                              padding: '0.85rem 1.1rem',
+                              background: '#eff6ff',
+                              border: '1.5px solid #3b82f6',
+                              borderRadius: '8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              flexWrap: 'wrap',
+                              gap: '10px'
+                            }}>
+                              <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ background: '#2563eb', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
+                                    ✓ PROPOSAL ACCEPTED
+                                  </span>
+                                  <span style={{ fontSize: '0.84rem', color: '#1e40af', fontWeight: 700 }}>
+                                    You Accepted this Project Proposal
+                                  </span>
+                                </div>
+                                <div style={{ marginTop: '4px', fontSize: '0.84rem', color: '#1d4ed8' }}>
+                                  Estimated Budget: <strong>{formatMoney(inqBudget)}</strong> • Required Initial 20% Down Payment: <strong>{formatMoney(requiredDownPayment)}</strong>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn-solid-green"
+                                style={{ background: '#2563eb', borderColor: '#1d4ed8', fontSize: '0.82rem', padding: '0.45rem 1.1rem' }}
+                                onClick={() => handleProceedToPaymentFromInquiry(inq)}
+                              >
+                                💳 Pay 20% Down Payment ({formatMoney(requiredDownPayment)}) →
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        if (inq.pmDecision === 'APPROVED') {
+                          return (
+                            <div style={{
+                              margin: '0.85rem 0',
+                              padding: '0.85rem 1.1rem',
+                              background: '#ecfdf5',
+                              border: '1.5px solid #10b981',
+                              borderRadius: '8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              flexWrap: 'wrap',
+                              gap: '10px'
+                            }}>
+                              <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ background: '#059669', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
+                                    ✓ PM APPROVED PROJECT QUOTATION
+                                  </span>
+                                  <span style={{ fontSize: '0.84rem', color: '#065f46', fontWeight: 700 }}>
+                                    Ready for 20% Initial Down Payment
+                                  </span>
+                                </div>
+                                <div style={{ marginTop: '4px', fontSize: '0.84rem', color: '#047857' }}>
+                                  Estimated Budget: <strong>{formatMoney(inqBudget)}</strong> • Required 20% Down Payment: <strong>{formatMoney(requiredDownPayment)}</strong>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn-solid-green"
+                                style={{ fontSize: '0.82rem', padding: '0.45rem 1.15rem' }}
+                                onClick={() => handleProceedToPaymentFromInquiry(inq, true)}
+                              >
+                                💳 Pay 20% Down Payment ({formatMoney(requiredDownPayment)}) →
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        if (inqBudget > 0 && inq.status === 'ANSWERED') {
+                          return (
+                            <div style={{
+                              margin: '0.85rem 0',
+                              padding: '0.85rem 1.1rem',
+                              background: '#fefce8',
+                              border: '1.5px solid #eab308',
+                              borderRadius: '8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              flexWrap: 'wrap',
+                              gap: '10px'
+                            }}>
+                              <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ background: '#ca8a04', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
+                                    📋 PROJECT QUOTATION ESTIMATE
+                                  </span>
+                                  <span style={{ fontSize: '0.84rem', color: '#854d0e', fontWeight: 700 }}>
+                                    Awaiting Final PM Approval
+                                  </span>
+                                </div>
+                                <div style={{ marginTop: '4px', fontSize: '0.84rem', color: '#713f12' }}>
+                                  Estimated Budget: <strong>{formatMoney(inqBudget)}</strong> • Estimated 20% Down Payment: <strong>{formatMoney(requiredDownPayment)}</strong>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return null;
+                      })()}
 
                       {inq.attachmentData && (
                         <div style={{ margin: '0.5rem 0' }}>
@@ -2168,10 +2849,102 @@ export default function ClientDashboard() {
           </div>
         )}
 
+        {/* TAB 5b: CONTRACTS (US-CM-09, 10, 11) */}
+        {activeTab === 'contracts' && (
+          <div>
+            <div className="light-panel-card">
+              <div className="panel-card-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                  <span className="brand-green-subtitle">LEGAL AGREEMENTS</span>
+                  <h3 className="panel-title">Your Construction Contracts &amp; Signed Agreements</h3>
+                  <p className="panel-meta">Official construction, architectural, and turnkey agreements prepared and issued by your Client Manager.</p>
+                </div>
+                {contracts.length > 0 && (
+                  <span className="pill-badge active" style={{ fontSize: '0.8rem', padding: '0.35rem 0.85rem' }}>
+                    {contracts.length} {contracts.length === 1 ? 'Active Contract' : 'Active Contracts'}
+                  </span>
+                )}
+              </div>
+
+              {contracts.length > 0 ? (
+                <div className="table-responsive-box" style={{ marginTop: '1rem' }}>
+                  <table className="light-table">
+                    <thead>
+                      <tr>
+                        <th>Contract No.</th>
+                        <th>Title / Project Scope</th>
+                        <th>Agreed Amount</th>
+                        <th>Signed Date</th>
+                        <th>Validity / End Date</th>
+                        <th>Status</th>
+                        <th style={{ textAlign: 'center' }}>Agreement Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {contracts.map((c) => (
+                        <tr key={c.id}>
+                          <td><strong>{c.contractNumber}</strong></td>
+                          <td>
+                            <strong>{c.title}</strong>
+                            {c.terms && (
+                              <p style={{ margin: '0.25rem 0 0', fontSize: '0.76rem', color: '#64748b', maxWidth: '320px', whiteSpace: 'pre-line' }}>
+                                {c.terms}
+                              </p>
+                            )}
+                          </td>
+                          <td><strong style={{ color: '#047857' }}>{formatMoney(c.amount)}</strong></td>
+                          <td>{formatDate(c.signedDate)}</td>
+                          <td>{c.endDate ? formatDate(c.endDate) : 'Standard Duration'}</td>
+                          <td>
+                            <span className={`pill-badge ${c.status?.toLowerCase() || 'active'}`} style={{
+                              background: c.status === 'ACTIVE' ? '#dcfce7' : '#fef3c7',
+                              color: c.status === 'ACTIVE' ? '#15803d' : '#b45309',
+                              fontWeight: 700,
+                              fontSize: '0.75rem',
+                              border: `1px solid ${c.status === 'ACTIVE' ? '#bbf7d0' : '#fde68a'}`,
+                              padding: '0.25rem 0.6rem'
+                            }}>
+                              {c.status}
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <button
+                              type="button"
+                              onClick={() => downloadFile(null, `Odiliya_Contract_${c.contractNumber}.pdf`, `Odiliya Contract Agreement - ${c.title}`, {
+                                contractNumber: c.contractNumber,
+                                title: c.title,
+                                amount: formatMoney(c.amount),
+                                client: clientProfile?.name || 'Valued Client',
+                                signedDate: formatDate(c.signedDate),
+                                validity: c.endDate ? formatDate(c.endDate) : 'Standard Contract Duration',
+                                status: c.status,
+                                terms: c.terms || 'Standard construction agreement executed with Odiliya Homes & Luxury Properties.'
+                              })}
+                              className="btn-solid-green"
+                              style={{ padding: '0.35rem 0.8rem', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              Download Agreement (PDF)
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>
+                  <p style={{ fontWeight: 600, fontSize: '1rem', margin: 0 }}>No contracts recorded yet.</p>
+                  <p style={{ fontSize: '0.85rem', margin: '0.5rem 0 0' }}>Once your Client Manager prepares and issues your contract agreement, it will appear here for review and download.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* TAB 6: DOCUMENTS */}
         {activeTab === 'documents' && (
           <div>
-            {/* Active Signed Client Contracts */}
+            {/* Active Signed Client Contracts Quick View */}
             <div className="light-panel-card" style={{ marginBottom: '1.5rem' }}>
               <div className="panel-card-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
                 <div>
@@ -2243,7 +3016,7 @@ export default function ClientDashboard() {
                               className="btn-solid-green"
                               style={{ padding: '0.35rem 0.8rem', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                             >
-                              📄 Download Agreement (PDF)
+                              Download Agreement (PDF)
                             </button>
                           </td>
                         </tr>
@@ -2465,7 +3238,7 @@ export default function ClientDashboard() {
                           fontSize: '0.75rem',
                           fontWeight: 700,
                         }}>
-                          📄 {doc.category}
+                          {doc.category}
                         </span>
                         <span style={{
                           background: '#f1f5f9',
@@ -2532,7 +3305,7 @@ export default function ClientDashboard() {
                       onMouseEnter={(e) => (e.currentTarget.style.background = '#065f46')}
                       onMouseLeave={(e) => (e.currentTarget.style.background = '#047857')}
                     >
-                      <span>📥</span> Download PDF Document
+                      Download PDF Document
                     </button>
                   </div>
                 ))}
@@ -2835,12 +3608,107 @@ export default function ClientDashboard() {
               boxShadow: '0 2px 4px rgba(30, 64, 175, 0.05)'
             }}>
               <h4 style={{ margin: '0 0 0.35rem', color: '#1e3a8a', fontSize: '1.05rem', fontWeight: 700 }}>
-                Client Manager Payment Administration
+                Client Payment &amp; Invoice Settlement Portal
               </h4>
               <p style={{ margin: 0, color: '#1e40af', fontSize: '0.9rem', lineHeight: 1.5 }}>
-                Official payment ledgers, tax invoices, and verification audits are viewed and managed exclusively by your <strong>Client Manager</strong>. When you submit a payment through our secure payment gateway or bank transfer below, it is directly routed to your Client Manager for verification, and an official confirmation message is delivered immediately to your account.
+                Submit project payments via secure online card checkout or direct bank transfer. Official payment invoices and tax receipts (PDF) are generated instantly for each transaction.
               </p>
             </div>
+
+            {/* Client Payment History and Invoices Download Section */}
+            {downPayments.length > 0 && (
+              <div className="light-panel-card" style={{ marginBottom: '1.75rem' }}>
+                <div className="panel-card-head" style={{ marginBottom: '1rem' }}>
+                  <div>
+                    <span className="brand-green-subtitle">TRANSACTION LEDGER &amp; INVOICES</span>
+                    <h3 className="panel-title">My Payment Records &amp; Official Invoices</h3>
+                    <p className="panel-meta">Download official PDF tax invoices and payment receipts for your construction milestones.</p>
+                  </div>
+                </div>
+
+                <div className="table-responsive-box">
+                  <table className="light-table">
+                    <thead>
+                      <tr>
+                        <th>Reference #</th>
+                        <th>Project</th>
+                        <th>Amount</th>
+                        <th>Payment Date</th>
+                        <th>Method</th>
+                        <th>Status</th>
+                        <th>INVOICE</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {downPayments.map((p) => {
+                        const isCard = (p.paymentMethod || '').toLowerCase().includes('card');
+                        return (
+                          <tr key={p.id}>
+                            <td>
+                              <strong>{p.referenceNumber || `PAY-${p.id}`}</strong>
+                            </td>
+                            <td>
+                              {p.project?.name || 'Assigned Project'}
+                            </td>
+                            <td>
+                              <strong style={{ color: 'var(--brand-green)', fontSize: '0.98rem' }}>
+                                {formatMoney(p.amount)}
+                              </strong>
+                            </td>
+                            <td>{formatDate(p.paymentDate)}</td>
+                            <td>
+                              <span className="pill-badge active" style={{ fontSize: '0.72rem' }}>
+                                {p.paymentMethod?.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{
+                                background: p.status === 'Approved' || isCard ? '#dcfce7' : '#fef3c7',
+                                color: p.status === 'Approved' || isCard ? '#15803d' : '#b45309',
+                                padding: '0.25rem 0.65rem',
+                                borderRadius: '16px',
+                                fontWeight: 700,
+                                fontSize: '0.75rem'
+                              }}>
+                                {isCard ? 'Payment Successful' : (p.status || 'Verified')}
+                              </span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn-solid-green"
+                                style={{
+                                  padding: '0.3rem 0.75rem',
+                                  fontSize: '0.78rem',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '0.35rem',
+                                  whiteSpace: 'nowrap',
+                                  fontWeight: 700,
+                                  background: '#047857',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: '6px',
+                                  cursor: 'pointer'
+                                }}
+                                onClick={() => {
+                                  downloadPaymentInvoice(p, clientProfile, p.project);
+                                  setSuccessMsg(`Official Payment Invoice for ${p.referenceNumber || `PAY-${p.id}`} downloaded.`);
+                                  setTimeout(() => setSuccessMsg(''), 4000);
+                                }}
+                                title="Download Official Payment Tax Invoice (PDF)"
+                              >
+                                Download Invoice (PDF)
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* PENDING PAYMENT STATUS BANNER (Shows when client has paid via bank transfer and waiting for CM to accept) */}
             {pendingBankPayment && (
@@ -2962,20 +3830,112 @@ export default function ClientDashboard() {
                 </div>
 
                 <form onSubmit={handleOpenCardGateway} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  {/* Project Selector */}
+                  {/* Project or Accepted Inquiry Selector */}
                   <div className="form-input-box">
-                    <label>Select Project *</label>
+                    <label>Select Project or Accepted Inquiry *</label>
                     <select
-                      value={payForm.projectId}
-                      onChange={(e) => setPayForm({ ...payForm, projectId: e.target.value })}
+                      value={payForm.projectId ? `PROJ-${payForm.projectId}` : (payForm.projectRequestId ? `REQ-${payForm.projectRequestId}` : (payForm.inquiryId ? `INQ-${payForm.inquiryId}` : ''))}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val.startsWith('PROJ-')) {
+                          const pId = val.replace('PROJ-', '');
+                          const proj = projects.find(p => String(p.id) === String(pId));
+                          const requiredDp = proj?.budget ? (proj.budget * 0.2).toFixed(2) : '';
+                          setPayForm({ ...payForm, projectId: pId, projectRequestId: '', inquiryId: '', amount: requiredDp || payForm.amount });
+                        } else if (val.startsWith('REQ-')) {
+                          const rId = Number(val.replace('REQ-', ''));
+                          const reqObj = projectRequests.find((r) => r.id === rId);
+                          const budget = reqObj?.pmEstimatedBudget || reqObj?.expectedBudget || 0;
+                          setPayForm({
+                            ...payForm,
+                            projectId: '',
+                            projectRequestId: String(rId),
+                            inquiryId: '',
+                            amount: budget > 0 ? (budget * 0.2).toFixed(2) : payForm.amount,
+                            notes: `Initial 20% Down Payment for Approved Request #${rId}: ${reqObj?.title || ''}`,
+                          });
+                        } else if (val.startsWith('INQ-')) {
+                          const inqId = Number(val.replace('INQ-', ''));
+                          const inqObj = inquiries.find((i) => i.id === inqId);
+                          const budget = inqObj?.pmEstimatedBudget || inqObj?.design?.budget || 0;
+                          setPayForm({
+                            ...payForm,
+                            projectId: inqObj?.project?.id || '',
+                            projectRequestId: '',
+                            inquiryId: inqId,
+                            amount: budget > 0 ? (budget * 0.2).toFixed(2) : payForm.amount,
+                            notes: `Initial 20% Down Payment for Inquiry #${inqId}: ${inqObj?.subject || ''}`,
+                          });
+                        } else {
+                          setPayForm({ ...payForm, projectId: '', projectRequestId: '', inquiryId: '' });
+                        }
+                      }}
                       required
                     >
-                      <option value="">-- Choose Assigned Project --</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
+                      <option value="">-- Choose PM Approved Project or Inquiry to Pay --</option>
+                      {projectRequests.filter(r => r.status === 'APPROVED' && !r.downPaymentPaid && !r.startedProjectId).length > 0 && (
+                        <optgroup label="PM Approved Project Requests (20% Down Payment Required)">
+                          {projectRequests.filter(r => r.status === 'APPROVED' && !r.downPaymentPaid && !r.startedProjectId).map((r) => {
+                            const bud = r.pmEstimatedBudget || r.expectedBudget || 0;
+                            return (
+                              <option key={`req-${r.id}`} value={`REQ-${r.id}`}>
+                                {r.isCustomDesign ? 'Custom Design' : 'Catalog Request'} #{r.id}: {r.title} {bud > 0 ? `(Approved: Rs. ${Number(bud).toLocaleString()})` : ''}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      )}
+                      {projects.length > 0 && (
+                        <optgroup label="Active Construction Projects">
+                          {projects.map((p) => (
+                            <option key={`p-${p.id}`} value={`PROJ-${p.id}`}>{p.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {inquiries.filter((i) => i.pmDecision === 'APPROVED' && !i.downPaymentPaid).length > 0 && (
+                        <optgroup label="PM Approved Inquiries & Quotations (20% Down Payment Required)">
+                          {inquiries.filter((i) => i.pmDecision === 'APPROVED' && !i.downPaymentPaid).map((i) => {
+                            const bud = i.pmEstimatedBudget || i.design?.budget || 0;
+                            return (
+                              <option key={`inq-${i.id}`} value={`INQ-${i.id}`}>
+                                Inquiry #{i.id}: {i.subject} {bud > 0 ? `(Approved: Rs. ${Number(bud).toLocaleString()})` : ''}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      )}
                     </select>
                   </div>
+
+                  {/* Linked Project Request info banner */}
+                  {payForm.projectRequestId && (() => {
+                    const linkedReq = projectRequests.find(r => r.id === Number(payForm.projectRequestId));
+                    if (!linkedReq) return null;
+                    const b = linkedReq.pmEstimatedBudget || linkedReq.expectedBudget || 0;
+                    return (
+                      <div style={{ background: '#ecfdf5', border: '1px solid #10b981', borderRadius: 8, padding: '0.85rem 1rem', fontSize: '0.88rem', color: '#065f46' }}>
+                        <strong>Selected Approved Request:</strong> #{linkedReq.id} - {linkedReq.title} ({linkedReq.isCustomDesign ? 'Custom Design' : 'Company Catalog'})
+                        <div style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                          Approved Budget: <strong>{formatMoney(b)}</strong> • Required 20% Down Payment: <strong>{formatMoney(b * 0.2)}</strong>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Linked Inquiry info banner */}
+                  {payForm.inquiryId && (() => {
+                    const linkedInq = inquiries.find(i => i.id === Number(payForm.inquiryId));
+                    if (!linkedInq) return null;
+                    const b = linkedInq.pmEstimatedBudget || linkedInq.design?.budget || 0;
+                    return (
+                      <div style={{ background: '#ecfdf5', border: '1px solid #10b981', borderRadius: 8, padding: '0.85rem 1rem', fontSize: '0.88rem', color: '#065f46' }}>
+                        <strong>Selected Project Inquiry:</strong> #{linkedInq.id} - {linkedInq.subject}
+                        <div style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                          Total Estimated Budget: <strong>{formatMoney(b)}</strong> • Required 20% Down Payment: <strong>{formatMoney(b * 0.2)}</strong>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Project Balance remaining widget */}
                   {payForm.projectId && (() => {
@@ -3146,20 +4106,112 @@ export default function ClientDashboard() {
                   </div>
 
                   <form onSubmit={handleClientSubmitPayment} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    {/* Project Selector */}
+                    {/* Project or Accepted Inquiry Selector */}
                     <div className="form-input-box">
-                      <label>Select Project *</label>
+                      <label>Select Project or Accepted Inquiry *</label>
                       <select
-                        value={payForm.projectId}
-                        onChange={(e) => setPayForm({ ...payForm, projectId: e.target.value })}
+                        value={payForm.projectId ? `PROJ-${payForm.projectId}` : (payForm.projectRequestId ? `REQ-${payForm.projectRequestId}` : (payForm.inquiryId ? `INQ-${payForm.inquiryId}` : ''))}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val.startsWith('PROJ-')) {
+                            const pId = val.replace('PROJ-', '');
+                            const proj = projects.find(p => String(p.id) === String(pId));
+                            const requiredDp = proj?.budget ? (proj.budget * 0.2).toFixed(2) : '';
+                            setPayForm({ ...payForm, projectId: pId, projectRequestId: '', inquiryId: '', amount: requiredDp || payForm.amount });
+                          } else if (val.startsWith('REQ-')) {
+                            const rId = Number(val.replace('REQ-', ''));
+                            const reqObj = projectRequests.find((r) => r.id === rId);
+                            const budget = reqObj?.pmEstimatedBudget || reqObj?.expectedBudget || 0;
+                            setPayForm({
+                              ...payForm,
+                              projectId: '',
+                              projectRequestId: String(rId),
+                              inquiryId: '',
+                              amount: budget > 0 ? (budget * 0.2).toFixed(2) : payForm.amount,
+                              notes: `Initial 20% Down Payment for Approved Request #${rId}: ${reqObj?.title || ''}`,
+                            });
+                          } else if (val.startsWith('INQ-')) {
+                            const inqId = Number(val.replace('INQ-', ''));
+                            const inqObj = inquiries.find((i) => i.id === inqId);
+                            const budget = inqObj?.pmEstimatedBudget || inqObj?.design?.budget || 0;
+                            setPayForm({
+                              ...payForm,
+                              projectId: inqObj?.project?.id || '',
+                              projectRequestId: '',
+                              inquiryId: inqId,
+                              amount: budget > 0 ? (budget * 0.2).toFixed(2) : payForm.amount,
+                              notes: `Initial 20% Down Payment for Inquiry #${inqId}: ${inqObj?.subject || ''}`,
+                            });
+                          } else {
+                            setPayForm({ ...payForm, projectId: '', projectRequestId: '', inquiryId: '' });
+                          }
+                        }}
                         required
                       >
-                        <option value="">-- Choose Assigned Project --</option>
-                        {projects.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
+                        <option value="">-- Choose PM Approved Project or Inquiry to Pay --</option>
+                        {projectRequests.filter(r => r.status === 'APPROVED' && !r.downPaymentPaid && !r.startedProjectId).length > 0 && (
+                          <optgroup label="PM Approved Project Requests (20% Down Payment Required)">
+                            {projectRequests.filter(r => r.status === 'APPROVED' && !r.downPaymentPaid && !r.startedProjectId).map((r) => {
+                              const bud = r.pmEstimatedBudget || r.expectedBudget || 0;
+                              return (
+                                <option key={`req-${r.id}`} value={`REQ-${r.id}`}>
+                                  {r.isCustomDesign ? 'Custom Design' : 'Catalog Request'} #{r.id}: {r.title} {bud > 0 ? `(Approved: Rs. ${Number(bud).toLocaleString()})` : ''}
+                                </option>
+                              );
+                            })}
+                          </optgroup>
+                        )}
+                        {projects.length > 0 && (
+                          <optgroup label="Active Construction Projects">
+                            {projects.map((p) => (
+                              <option key={`p-${p.id}`} value={`PROJ-${p.id}`}>{p.name}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {inquiries.filter((i) => i.pmDecision === 'APPROVED' && !i.downPaymentPaid).length > 0 && (
+                          <optgroup label="PM Approved Inquiries & Quotations (20% Down Payment Required)">
+                            {inquiries.filter((i) => i.pmDecision === 'APPROVED' && !i.downPaymentPaid).map((i) => {
+                              const bud = i.pmEstimatedBudget || i.design?.budget || 0;
+                              return (
+                                <option key={`inq-${i.id}`} value={`INQ-${i.id}`}>
+                                  Inquiry #{i.id}: {i.subject} {bud > 0 ? `(Approved: Rs. ${Number(bud).toLocaleString()})` : ''}
+                                </option>
+                              );
+                            })}
+                          </optgroup>
+                        )}
                       </select>
                     </div>
+
+                    {/* Linked Project Request info banner */}
+                    {payForm.projectRequestId && (() => {
+                      const linkedReq = projectRequests.find(r => r.id === Number(payForm.projectRequestId));
+                      if (!linkedReq) return null;
+                      const b = linkedReq.pmEstimatedBudget || linkedReq.expectedBudget || 0;
+                      return (
+                        <div style={{ background: '#ecfdf5', border: '1px solid #10b981', borderRadius: 8, padding: '0.85rem 1rem', fontSize: '0.88rem', color: '#065f46' }}>
+                          <strong>Selected Approved Request:</strong> #{linkedReq.id} - {linkedReq.title} ({linkedReq.isCustomDesign ? 'Custom Design' : 'Company Catalog'})
+                          <div style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                            Approved Budget: <strong>{formatMoney(b)}</strong> • Required 20% Down Payment: <strong>{formatMoney(b * 0.2)}</strong>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Linked Inquiry info banner */}
+                    {payForm.inquiryId && (() => {
+                      const linkedInq = inquiries.find(i => i.id === Number(payForm.inquiryId));
+                      if (!linkedInq) return null;
+                      const b = linkedInq.pmEstimatedBudget || linkedInq.design?.budget || 0;
+                      return (
+                        <div style={{ background: '#ecfdf5', border: '1px solid #10b981', borderRadius: 8, padding: '0.85rem 1rem', fontSize: '0.88rem', color: '#065f46' }}>
+                          <strong>Selected Project Inquiry:</strong> #{linkedInq.id} - {linkedInq.subject}
+                          <div style={{ marginTop: '4px', fontSize: '0.82rem' }}>
+                            Total Estimated Budget: <strong>{formatMoney(b)}</strong> • Required 20% Down Payment: <strong>{formatMoney(b * 0.2)}</strong>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Amount */}
                     <div className="form-input-box">
@@ -3180,6 +4232,7 @@ export default function ClientDashboard() {
                       <label>Transfer Date *</label>
                       <input
                         type="date"
+                        min={getTodayDateString()}
                         value={payForm.paymentDate}
                         onChange={(e) => setPayForm({ ...payForm, paymentDate: e.target.value })}
                         required
@@ -3257,7 +4310,22 @@ export default function ClientDashboard() {
 
         {/* ===== DEDICATED CARD FILLING & CHECKOUT DASHBOARD ===== */}
         {activeTab === 'card-checkout' && (() => {
-          const chosenCheckoutProject = projects.find(p => p.id === Number(payForm.projectId)) || projects[0];
+          const chosenCheckoutProject = projects.find(p => p.id === Number(payForm.projectId));
+          const chosenCheckoutInquiry = inquiries.find(i => i.id === Number(payForm.inquiryId));
+          const chosenCheckoutReq = projectRequests.find(r => r.id === Number(payForm.projectRequestId));
+          const checkoutProjectName = chosenCheckoutProject?.name
+            || (chosenCheckoutReq ? `${chosenCheckoutReq.isCustomDesign ? 'Custom Design' : 'Catalog Request'} #${chosenCheckoutReq.id}: ${chosenCheckoutReq.title}` : null)
+            || (chosenCheckoutInquiry ? `Inquiry #${chosenCheckoutInquiry.id}: ${chosenCheckoutInquiry.subject}` : 'General Project Down Payment');
+          const checkoutProjectLocation = chosenCheckoutProject?.location
+            || chosenCheckoutReq?.location
+            || chosenCheckoutInquiry?.design?.location
+            || clientProfile?.address
+            || 'Odiliya Residencies Site Location';
+          const checkoutTotalBudget = chosenCheckoutProject?.budget
+            || chosenCheckoutReq?.pmEstimatedBudget
+            || chosenCheckoutReq?.expectedBudget
+            || chosenCheckoutInquiry?.pmEstimatedBudget
+            || chosenCheckoutInquiry?.design?.budget;
           const checkoutBalance = getProjectBalance(payForm.projectId || chosenCheckoutProject?.id);
 
           return (
@@ -3343,10 +4411,10 @@ export default function ClientDashboard() {
                       TRANSACTION &amp; PROJECT SUMMARY
                     </span>
                     <h3 style={{ margin: '0.35rem 0 0.25rem', fontSize: '1.3rem', fontWeight: 800, color: '#0f172a' }}>
-                      {chosenCheckoutProject?.name || 'General Project Down Payment'}
+                      {checkoutProjectName}
                     </h3>
                     <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748b' }}>
-                      {chosenCheckoutProject?.location || clientProfile?.address || 'Odiliya Residencies Site Location'}
+                      {checkoutProjectLocation}
                     </p>
                   </div>
 
@@ -3360,11 +4428,17 @@ export default function ClientDashboard() {
                       <span>Client OD ID:</span>
                       <strong style={{ color: '#1e40af', fontFamily: 'monospace' }}>{clientProfile?.employeeNumber || 'OD-000101'}</strong>
                     </div>
-                    {chosenCheckoutProject?.budget && (
+                    {chosenCheckoutInquiry && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#475569' }}>
+                        <span>Inquiry Reference:</span>
+                        <strong style={{ color: '#047857' }}>#{chosenCheckoutInquiry.id} - {chosenCheckoutInquiry.subject}</strong>
+                      </div>
+                    )}
+                    {checkoutTotalBudget && (
                       <>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#475569' }}>
-                          <span>Total Contract Budget:</span>
-                          <span style={{ fontWeight: 600, color: '#0f172a' }}>Rs. {Number(chosenCheckoutProject.budget).toLocaleString()}</span>
+                          <span>Total Estimated Budget:</span>
+                          <span style={{ fontWeight: 600, color: '#0f172a' }}>Rs. {Number(checkoutTotalBudget).toLocaleString()}</span>
                         </div>
                         {checkoutBalance && (
                           <>
@@ -3690,6 +4764,23 @@ export default function ClientDashboard() {
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
               <button
                 type="button"
+                className="btn-solid-green"
+                style={{ padding: '0.8rem 1.85rem', fontSize: '1.05rem', fontWeight: 700, background: '#047857', display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+                onClick={() => {
+                  downloadPaymentInvoice({
+                    referenceNumber: paymentConfirmationModal.txnRef,
+                    amount: paymentConfirmationModal.amount,
+                    paymentDate: paymentConfirmationModal.date,
+                    paymentMethod: paymentConfirmationModal.paymentMethod,
+                    status: 'Payment Successful',
+                    notes: paymentConfirmationModal.projectName,
+                  }, clientProfile, { name: paymentConfirmationModal.projectName });
+                }}
+              >
+                Download Official Invoice (PDF)
+              </button>
+              <button
+                type="button"
                 className="btn-outline"
                 style={{ padding: '0.8rem 1.85rem', fontSize: '1.05rem', fontWeight: 600 }}
                 onClick={() => {
@@ -3859,6 +4950,7 @@ export default function ClientDashboard() {
                   <label>Target Construction Start Date (Optional)</label>
                   <input
                     type="date"
+                    min={getTodayDateString()}
                     value={designRequestForm.targetStartDate}
                     onChange={(e) => setDesignRequestForm({ ...designRequestForm, targetStartDate: e.target.value })}
                   />

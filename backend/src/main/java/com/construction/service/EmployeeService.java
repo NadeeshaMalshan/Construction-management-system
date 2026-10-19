@@ -17,7 +17,13 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.construction.model.AttendanceQrCode;
+import com.construction.repository.AttendanceQrCodeRepository;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -25,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -37,6 +44,7 @@ public class EmployeeService {
     private final UserAccountRepository userAccountRepository;
     private final PasswordService passwordService;
     private final UserAccountRoleSchemaMigration userAccountRoleSchemaMigration;
+    private final AttendanceQrCodeRepository attendanceQrCodeRepository;
 
     public EmployeeService(
             EmployeeRepository employeeRepository,
@@ -44,7 +52,8 @@ public class EmployeeService {
             ProjectRepository projectRepository,
             UserAccountRepository userAccountRepository,
             PasswordService passwordService,
-            UserAccountRoleSchemaMigration userAccountRoleSchemaMigration
+            UserAccountRoleSchemaMigration userAccountRoleSchemaMigration,
+            AttendanceQrCodeRepository attendanceQrCodeRepository
     ) {
         this.employeeRepository = employeeRepository;
         this.attendanceRepository = attendanceRepository;
@@ -52,6 +61,7 @@ public class EmployeeService {
         this.userAccountRepository = userAccountRepository;
         this.passwordService = passwordService;
         this.userAccountRoleSchemaMigration = userAccountRoleSchemaMigration;
+        this.attendanceQrCodeRepository = attendanceQrCodeRepository;
     }
 
     @PostConstruct
@@ -183,7 +193,7 @@ public class EmployeeService {
         if (employee.getRole() == null || employee.getRole().isBlank()) {
             employee.setRole(employee.getPosition());
         }
-
+        //password validations
         if (employee.getPasswordHash() == null || employee.getPasswordHash().isBlank()) {
             throw new BadRequestException("Password is required when registering an employee");
         } else if (!employee.getPasswordHash().startsWith("$2a$")) {
@@ -210,6 +220,7 @@ public class EmployeeService {
         if (!employee.getEmail().trim().matches(emailPattern)) {
             throw new BadRequestException("A valid email address is required (e.g. employee@odiliya.com)");
         }
+        //Prevent duplicate emails
         if (isNew) {
             if (employeeRepository.existsByEmailIgnoreCase(employee.getEmail().trim())) {
                 throw new ConflictException("Employee with email '" + employee.getEmail().trim() + "' already exists");
@@ -219,6 +230,7 @@ public class EmployeeService {
                 throw new ConflictException("Employee with email '" + employee.getEmail().trim() + "' already exists");
             }
         }
+        //Phone validation
         if (employee.getPhone() == null || employee.getPhone().isBlank()) {
             throw new BadRequestException("Contact phone number is required");
         }
@@ -439,8 +451,8 @@ public class EmployeeService {
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
         LocalDate date = input.getDate() != null ? input.getDate() : today;
 
-        if (!date.equals(today)) {
-            throw new BadRequestException("Attendance can only be marked for today. Previous and upcoming days attendance cannot be marked.");
+        if (date.isAfter(today)) {
+            throw new BadRequestException("Attendance cannot be marked for future dates (" + date + ").");
         }
 
         String rawStatus = input.getStatus() != null ? input.getStatus().trim().toUpperCase() : "PRESENT";
@@ -461,7 +473,7 @@ public class EmployeeService {
             }
         } else if ("HALF_DAY".equalsIgnoreCase(rawStatus)) {
             if (checkIn == null || checkIn.isBlank()) {
-                checkIn = "08:00";
+                checkIn = "12:30";
             }
         }
 
@@ -648,5 +660,221 @@ public class EmployeeService {
         summary.put("todayAttendance", todayAttendance);
 
         return summary;
+    }
+
+    // --- QR Code Attendance Feature ---
+
+    public Map<String, Object> getTodayQrCode() {
+        ZoneId zoneId = ZoneId.of("Asia/Kolkata");
+        LocalDate today = LocalDate.now(zoneId);
+        LocalDateTime now = LocalDateTime.now(zoneId);
+
+        Optional<AttendanceQrCode> qrOpt = attendanceQrCodeRepository.findFirstByDateAndActiveTrueOrderByCreatedAtDesc(today);
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("today", today);
+        res.put("currentTime", now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+
+        if (qrOpt.isEmpty()) {
+            res.put("hasActiveQr", false);
+            res.put("status", "NOT_GENERATED");
+            res.put("message", "No active QR code generated for today yet.");
+            return res;
+        }
+
+        AttendanceQrCode qr = qrOpt.get();
+        if (now.isAfter(qr.getExpiresAt())) {
+            qr.setActive(false);
+            attendanceQrCodeRepository.save(qr);
+            res.put("hasActiveQr", false);
+            res.put("status", "EXPIRED");
+            res.put("message", "Today's QR code expired at 11:59:59 PM.");
+            res.put("expiresAt", qr.getExpiresAt());
+            res.put("totalScans", qr.getTotalScans());
+            return res;
+        }
+
+        long secondsRemaining = java.time.Duration.between(now, qr.getExpiresAt()).getSeconds();
+        res.put("hasActiveQr", true);
+        res.put("status", "ACTIVE");
+        res.put("id", qr.getId());
+        res.put("codeToken", qr.getCodeToken());
+        res.put("date", qr.getDate());
+        res.put("createdAt", qr.getCreatedAt());
+        res.put("expiresAt", qr.getExpiresAt());
+        res.put("createdBy", qr.getCreatedBy());
+        res.put("totalScans", qr.getTotalScans());
+        res.put("secondsRemaining", Math.max(0, secondsRemaining));
+        res.put("validUntilTime", "11:59:59 PM");
+        return res;
+    }
+
+    public Map<String, Object> generateDailyQrCode(String createdBy) {
+        ZoneId zoneId = ZoneId.of("Asia/Kolkata");
+        LocalDate today = LocalDate.now(zoneId);
+        LocalDateTime now = LocalDateTime.now(zoneId);
+        LocalDateTime expiresAt = today.atTime(23, 59, 59);
+
+        // Deactivate all previous QR codes for today
+        attendanceQrCodeRepository.deactivateAllForDate(today);
+
+        String randomCode = UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
+        String dateCompact = today.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String codeToken = "ODL-ATT-" + dateCompact + "-" + randomCode;
+
+        AttendanceQrCode qr = new AttendanceQrCode(
+                codeToken,
+                today,
+                now,
+                expiresAt,
+                true,
+                createdBy != null && !createdBy.isBlank() ? createdBy.trim() : "Employee Manager"
+        );
+
+        AttendanceQrCode saved = attendanceQrCodeRepository.save(qr);
+        long secondsRemaining = java.time.Duration.between(now, expiresAt).getSeconds();
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("hasActiveQr", true);
+        res.put("status", "ACTIVE");
+        res.put("id", saved.getId());
+        res.put("codeToken", saved.getCodeToken());
+        res.put("date", saved.getDate());
+        res.put("createdAt", saved.getCreatedAt());
+        res.put("expiresAt", saved.getExpiresAt());
+        res.put("createdBy", saved.getCreatedBy());
+        res.put("totalScans", saved.getTotalScans());
+        res.put("secondsRemaining", Math.max(0, secondsRemaining));
+        res.put("validUntilTime", "11:59:59 PM");
+        res.put("message", "Daily attendance QR code generated successfully. Valid until 11:59:59 PM today.");
+        return res;
+    }
+
+    public Map<String, Object> scanQrCode(String token, Long employeeId, String username) {
+        if (token == null || token.isBlank()) {
+            throw new BadRequestException("QR code token is required.");
+        }
+
+        String rawToken = token.trim();
+        String lookupToken = rawToken;
+        if (rawToken.startsWith("{") && (rawToken.contains("token") || rawToken.contains("codeToken"))) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(rawToken);
+                if (node.has("token")) {
+                    lookupToken = node.get("token").asText().trim();
+                } else if (node.has("codeToken")) {
+                    lookupToken = node.get("codeToken").asText().trim();
+                }
+            } catch (Exception ignored) {}
+        } else if (rawToken.contains("token=")) {
+            int idx = rawToken.indexOf("token=");
+            lookupToken = rawToken.substring(idx + 6).split("&")[0].trim();
+        }
+
+        ZoneId zoneId = ZoneId.of("Asia/Kolkata");
+        LocalDate today = LocalDate.now(zoneId);
+        LocalDateTime now = LocalDateTime.now(zoneId);
+
+        final String cleanToken = lookupToken;
+        AttendanceQrCode qr = attendanceQrCodeRepository.findByCodeToken(cleanToken)
+                .orElseThrow(() -> new BadRequestException("Invalid or unrecognized attendance QR code."));
+
+        if (!qr.isActive() || !qr.getDate().equals(today)) {
+            throw new BadRequestException("This QR code is inactive or from a different date. Please ask the Employee Manager for today's active QR.");
+        }
+
+        if (now.isAfter(qr.getExpiresAt())) {
+            qr.setActive(false);
+            attendanceQrCodeRepository.save(qr);
+            throw new BadRequestException("This QR code expired at 11:59:59 PM today. Please request a new daily QR code from the Employee Manager.");
+        }
+
+        Employee emp = null;
+        if (employeeId != null) {
+            emp = employeeRepository.findById(employeeId).orElse(null);
+        }
+        if (emp == null && username != null && !username.isBlank()) {
+            emp = getEmployeeByUsername(username.trim());
+        }
+        if (emp == null) {
+            throw new BadRequestException("Employee record could not be identified for the scan. Please log in with your employee account.");
+        }
+
+        String currentTimeStr = now.format(DateTimeFormatter.ofPattern("HH:mm"));
+        Optional<EmployeeAttendance> existingOpt = attendanceRepository.findByEmployeeIdAndDate(emp.getId(), today);
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("employeeId", emp.getId());
+        res.put("employeeName", emp.getName());
+        res.put("employeeCode", emp.getEmployeeId());
+        res.put("date", today);
+
+        if (existingOpt.isEmpty()) {
+            // Case 1: First Scan -> Record Check-In
+            EmployeeAttendance att = new EmployeeAttendance();
+            att.setEmployee(emp);
+            att.setDate(today);
+            att.setStatus("PRESENT");
+            att.setCheckInTime(currentTimeStr);
+            att.setCheckOutTime(null);
+            att.setRemarks("Attendance marked via QR Code");
+            att.setRecordedBy("QR Code Scan");
+
+            EmployeeAttendance saved = attendanceRepository.save(att);
+            qr.incrementScans();
+            attendanceQrCodeRepository.save(qr);
+
+            res.put("action", "CHECK_IN");
+            res.put("checkInTime", currentTimeStr);
+            res.put("message", "Check-In recorded successfully for " + emp.getName() + " at " + currentTimeStr + "!");
+            res.put("attendance", saved);
+            return res;
+        } else {
+            EmployeeAttendance existing = existingOpt.get();
+
+            if (existing.getCheckOutTime() != null && !existing.getCheckOutTime().isBlank()) {
+                throw new BadRequestException("Attendance for " + emp.getName() + " on " + today +
+                        " is already finalized (Checked in at " + existing.getCheckInTime() +
+                        ", Checked out at " + existing.getCheckOutTime() + ").");
+            }
+
+            if (existing.getCheckInTime() != null && !existing.getCheckInTime().isBlank()) {
+                LocalTime inTime = LocalTime.parse(existing.getCheckInTime().length() == 4 ? "0" + existing.getCheckInTime() : existing.getCheckInTime());
+                LocalTime outTime = LocalTime.parse(currentTimeStr);
+
+                if (!outTime.isAfter(inTime)) {
+                    throw new BadRequestException("Check-Out time (" + currentTimeStr + ") must be after your Check-In time (" + existing.getCheckInTime() + "). If you just checked in, please scan when your shift ends.");
+                }
+
+                existing.setCheckOutTime(currentTimeStr);
+                if (existing.getRemarks() == null || existing.getRemarks().isBlank() || "Unavailable".equalsIgnoreCase(existing.getRemarks())) {
+                    existing.setRemarks("Completed via QR Code");
+                }
+                EmployeeAttendance saved = attendanceRepository.save(existing);
+                qr.incrementScans();
+                attendanceQrCodeRepository.save(qr);
+
+                res.put("action", "CHECK_OUT");
+                res.put("checkInTime", existing.getCheckInTime());
+                res.put("checkOutTime", currentTimeStr);
+                res.put("message", "Check-Out recorded successfully for " + emp.getName() + " at " + currentTimeStr + "! Today's attendance is complete.");
+                res.put("attendance", saved);
+                return res;
+            } else {
+                // Was marked without check-in time (e.g. absent/on-leave changed to present)
+                existing.setStatus("PRESENT");
+                existing.setCheckInTime(currentTimeStr);
+                existing.setRecordedBy("QR Code Scan");
+                EmployeeAttendance saved = attendanceRepository.save(existing);
+                qr.incrementScans();
+                attendanceQrCodeRepository.save(qr);
+
+                res.put("action", "CHECK_IN");
+                res.put("checkInTime", currentTimeStr);
+                res.put("message", "Check-In recorded successfully for " + emp.getName() + " at " + currentTimeStr + "!");
+                res.put("attendance", saved);
+                return res;
+            }
+        }
     }
 }

@@ -9,16 +9,17 @@ export default defineConfig({
   plugins: [react()],
   root: frontendRoot,
   server: {
+    host: true,
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8085',
         changeOrigin: true,
       },
     },
   },
   build: {
-    outDir: resolve(frontendRoot, '../dist'),
+    outDir: 'dist',
     emptyOutDir: true,
   },
 });

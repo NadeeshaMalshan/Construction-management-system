@@ -158,6 +158,31 @@ public class EmployeeController {
         return ResponseEntity.noContent().build();
     }
 
+    // QR Code Attendance Endpoints
+    @GetMapping("/attendance/qr/today")
+    public ResponseEntity<Map<String, Object>> getTodayQrCode() {
+        return ResponseEntity.ok(employeeService.getTodayQrCode());
+    }
+
+    @PostMapping("/attendance/qr/generate")
+    public ResponseEntity<Map<String, Object>> generateDailyQrCode(@RequestBody(required = false) Map<String, String> payload) {
+        String createdBy = payload != null ? payload.get("createdBy") : null;
+        return ResponseEntity.status(HttpStatus.CREATED).body(employeeService.generateDailyQrCode(createdBy));
+    }
+
+    @PostMapping("/attendance/qr/scan")
+    public ResponseEntity<Map<String, Object>> scanQrCode(@RequestBody Map<String, Object> payload) {
+        String token = payload != null && payload.get("token") != null ? String.valueOf(payload.get("token")) : null;
+        Long employeeId = null;
+        if (payload != null && payload.get("employeeId") != null) {
+            try {
+                employeeId = Long.valueOf(String.valueOf(payload.get("employeeId")));
+            } catch (NumberFormatException ignored) {}
+        }
+        String username = payload != null && payload.get("username") != null ? String.valueOf(payload.get("username")) : null;
+        return ResponseEntity.ok(employeeService.scanQrCode(token, employeeId, username));
+    }
+
     // Step 6: Employee Views Assigned Projects
     @GetMapping("/{id:\\d+}/projects")
     public ResponseEntity<List<Project>> getAssignedProjects(@PathVariable Long id) {
