@@ -42,6 +42,7 @@
   --radius-lg:   16px;
   --radius-xl:   24px;
   --radius-pill: 9999px;
+  --navbar-height: 74px;
 
   /* =========================================================
      CUSTOMIZABLE PORTAL BACKGROUND SYSTEM
@@ -487,15 +488,17 @@ input, select, textarea { font-family: var(--font-family); font-size: 1rem; }
     grid-column: 1;
     grid-row: 1 / span 100;
     position: sticky;
-    top: 1rem;
-    z-index: 2;
+    top: calc(var(--navbar-height, 74px) + 1.25rem);
+    z-index: 50;
     display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: .25rem;
     margin: 0;
     padding: 1rem .6rem;
-    overflow: hidden;
+    overflow-y: auto;
+    max-height: calc(100vh - var(--navbar-height, 74px) - 2.5rem);
+    scrollbar-width: thin;
     border: 0;
     border-radius: 16px;
     background: linear-gradient(180deg, #172a3a 0%, #102131 100%);
@@ -946,6 +949,7 @@ textarea { resize: vertical; min-height: 100px; }
 
 /* Mobile & Tablet Navigation (< 900px) */
 @media (max-width: 900px) {
+  :root { --navbar-height: 62px; }
   .desktop-only { display: none !important; }
   .navbar-mobile-actions { display: flex; align-items: center; gap: 8px; }
 
@@ -1463,7 +1467,9 @@ textarea { resize: vertical; min-height: 100px; }
     align-items: stretch;
     gap: .3rem;
     padding: 1rem .7rem;
-    overflow: visible;
+    overflow-y: auto;
+    max-height: calc(100vh - var(--navbar-height, 74px) - 2.5rem);
+    scrollbar-width: thin;
   }
   .pm-page:has(> .pm-tabs) > .pm-tabs button {
     padding: .85rem 1rem;
