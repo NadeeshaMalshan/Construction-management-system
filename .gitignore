@@ -1,0 +1,23 @@
+# Maven
+target/
+**/target/
+*.class
+
+# Node / Frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# IDE & Editor files
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Log files
+*.log
+
+# Environment variables
+.env
+.env.local

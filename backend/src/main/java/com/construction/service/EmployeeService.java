@@ -561,8 +561,8 @@ public class EmployeeService {
         if (record.getCheckInTime() != null && !record.getCheckInTime().isBlank()) {
             java.time.LocalTime inTime = java.time.LocalTime.parse(record.getCheckInTime().length() == 4 ? "0" + record.getCheckInTime() : record.getCheckInTime());
             java.time.LocalTime outTime = java.time.LocalTime.parse(finalCheckOut.length() == 4 ? "0" + finalCheckOut : finalCheckOut);
-            if (!outTime.isAfter(inTime)) {
-                throw new BadRequestException("Check-out time (" + finalCheckOut + ") must be after check-in time (" + record.getCheckInTime() + ")");
+            if (outTime.isBefore(inTime)) {
+                throw new BadRequestException("Check-out time (" + finalCheckOut + ") cannot be earlier than check-in time (" + record.getCheckInTime() + ")");
             }
         }
 
@@ -842,8 +842,8 @@ public class EmployeeService {
                 LocalTime inTime = LocalTime.parse(existing.getCheckInTime().length() == 4 ? "0" + existing.getCheckInTime() : existing.getCheckInTime());
                 LocalTime outTime = LocalTime.parse(currentTimeStr);
 
-                if (!outTime.isAfter(inTime)) {
-                    throw new BadRequestException("Check-Out time (" + currentTimeStr + ") must be after your Check-In time (" + existing.getCheckInTime() + "). If you just checked in, please scan when your shift ends.");
+                if (outTime.isBefore(inTime)) {
+                    throw new BadRequestException("Check-Out time (" + currentTimeStr + ") cannot be earlier than your Check-In time (" + existing.getCheckInTime() + ").");
                 }
 
                 existing.setCheckOutTime(currentTimeStr);

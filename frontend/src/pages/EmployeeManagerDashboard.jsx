@@ -1818,13 +1818,14 @@ export default function EmployeeManagerDashboard() {
                           }
                         }}
                         style={{
-                          padding: '6px 12px',
+                          padding: '6px 10px',
                           borderRadius: '6px',
                           border: selectedDate === today ? '2px solid #047857' : '2px solid #d97706',
                           background: '#ffffff',
                           color: '#111827',
                           fontWeight: 700,
                           fontSize: '0.88rem',
+                          width: '145px',
                           boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                         }}
                       />
@@ -2015,27 +2016,10 @@ export default function EmployeeManagerDashboard() {
                           </span>
                         </div>
                         <p style={{ margin: '3px 0 0', fontSize: '0.82rem', color: '#78350f' }}>
-                          Viewing past attendance records for {formatDate(selectedDate)}. You can review, mark past attendance, or jump back to today's live register. Daily QR code scanning applies only to today.
+                          Viewing past attendance records for {formatDate(selectedDate)}. You can review and mark attendance. Use "Jump to Today" in the toolbar above to return to today's live register.
                         </p>
                       </div>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setSelectedDate(today)}
-                      style={{
-                        padding: '8px 16px',
-                        background: '#047857',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '8px',
-                        fontWeight: 700,
-                        fontSize: '0.82rem',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Return to Today's Register ({today})
-                    </button>
                   </div>
                 ) : (
                   /* Daily QR Code Quick Alert Banner */
