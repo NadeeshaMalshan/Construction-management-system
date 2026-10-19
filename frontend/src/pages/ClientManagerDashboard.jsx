@@ -1128,8 +1128,8 @@ export default function ClientManagerDashboard() {
         {activeTab === 'inquiries' && pmEvaluatedInquiries.length > 0 && (
           <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingBottom: '0.25rem' }}>
-              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                🔔 Project Manager Decision Updates ({pmEvaluatedInquiries.length})
+              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '1rem', color: '#047857' }}>notifications</span> Project Manager Decision Updates ({pmEvaluatedInquiries.length})
               </span>
             </div>
             {pmEvaluatedInquiries.map((inq) => {
@@ -1805,11 +1805,14 @@ export default function ClientManagerDashboard() {
                                     fontWeight: 700,
                                     fontSize: '0.85rem',
                                     cursor: 'pointer',
-                                    boxShadow: '0 2px 4px rgba(22,163,74,0.2)'
+                                    boxShadow: '0 2px 4px rgba(22,163,74,0.2)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px'
                                   }}
                                   onClick={() => openAddPayment(null, null, inq)}
                                 >
-                                  💰 Record Down Payment (20%) →
+                                  <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>payments</span> Record Down Payment (20%) →
                                 </button>
                               )}
                               {inq.downPaymentPaid && (
@@ -3082,10 +3085,10 @@ export default function ClientManagerDashboard() {
                                         <button
                                           type="button"
                                           className="btn-solid-green"
-                                          style={{ fontSize: '0.82rem', padding: '0.4rem 1rem', background: '#16a34a' }}
+                                          style={{ fontSize: '0.82rem', padding: '0.4rem 1rem', background: '#16a34a', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                                           onClick={() => openAddPayment(null, req, null)}
                                         >
-                                          💰 Record Client Down Payment (20%) →
+                                          <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>payments</span> Record Client Down Payment (20%) →
                                         </button>
                                       </div>
                                     )}

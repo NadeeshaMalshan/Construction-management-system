@@ -417,7 +417,7 @@ export default function EmployeeDashboard() {
                   boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                 }}
               >
-                <span>📷</span>
+                <span className="material-symbols-outlined" style={{ fontSize: '1.25rem' }}>qr_code_scanner</span>
                 {todayRecord?.checkOutTime
                   ? 'Shift Completed'
                   : todayRecord
@@ -1140,7 +1140,7 @@ export default function EmployeeDashboard() {
           <div>
             {scanNotice && (
               <div style={{ background: '#ecfdf5', color: '#065f46', padding: '14px 18px', borderRadius: '10px', border: '1px solid #a7f3d0', marginBottom: '20px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>✅</span>
+                <span className="material-symbols-outlined" style={{ fontSize: '1.3rem', color: '#059669' }}>check_circle</span>
                 <span>{scanNotice}</span>
               </div>
             )}
@@ -1169,9 +1169,8 @@ export default function EmployeeDashboard() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '1.4rem'
                 }}>
-                  📷
+                  <span className="material-symbols-outlined" style={{ fontSize: '1.5rem' }}>qr_code_scanner</span>
                 </div>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -1222,7 +1221,7 @@ export default function EmployeeDashboard() {
                       boxShadow: todayRecord ? '0 2px 6px rgba(217, 119, 6, 0.3)' : '0 2px 6px rgba(4, 120, 87, 0.3)',
                     }}
                   >
-                    <span>📷</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.25rem' }}>qr_code_scanner</span>
                     {todayRecord ? 'Scan QR to Check-Out' : 'Scan QR for Check-In'}
                   </button>
                 )}
@@ -2146,9 +2145,13 @@ function AttendanceScannerModal({ isOpen, onClose, profile, user, onSuccess }) {
                   fontWeight: 700,
                   fontSize: '0.82rem',
                   cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
                 }}
               >
-                📷 Camera View
+                <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>photo_camera</span> Camera View
               </button>
               <button
                 type="button"
@@ -2163,9 +2166,13 @@ function AttendanceScannerModal({ isOpen, onClose, profile, user, onSuccess }) {
                   fontWeight: 700,
                   fontSize: '0.82rem',
                   cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
                 }}
               >
-                📁 Upload Photo
+                <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>upload_file</span> Upload Photo
               </button>
               <button
                 type="button"
@@ -2180,9 +2187,13 @@ function AttendanceScannerModal({ isOpen, onClose, profile, user, onSuccess }) {
                   fontWeight: 700,
                   fontSize: '0.82rem',
                   cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
                 }}
               >
-                ⌨️ Enter Code
+                <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>keyboard</span> Enter Code
               </button>
             </div>
 
@@ -2197,7 +2208,9 @@ function AttendanceScannerModal({ isOpen, onClose, profile, user, onSuccess }) {
               <div>
                 {cameraPermissionError ? (
                   <div style={{ background: '#fffbeb', padding: '16px', borderRadius: '10px', border: '1px solid #fde68a', textAlign: 'center', marginBottom: '14px' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '6px' }}>📷</div>
+                    <div style={{ marginBottom: '6px' }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: '2.5rem', color: '#b45309' }}>no_photography</span>
+                    </div>
                     <div style={{ fontWeight: 700, color: '#92400e', fontSize: '0.88rem' }}>Camera Permission Required</div>
                     <p style={{ fontSize: '0.8rem', color: '#78350f', margin: '6px 0 12px' }}>
                       {cameraPermissionError}
@@ -2248,9 +2261,12 @@ function AttendanceScannerModal({ isOpen, onClose, profile, user, onSuccess }) {
                           fontSize: '0.78rem',
                           fontWeight: 600,
                           cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
                         }}
                       >
-                        🔄 Switch Camera ({facingMode === 'environment' ? 'Rear' : 'Front'})
+                        <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>cameraswitch</span> Switch Camera ({facingMode === 'environment' ? 'Rear' : 'Front'})
                       </button>
                     </div>
                   </div>
@@ -2261,7 +2277,9 @@ function AttendanceScannerModal({ isOpen, onClose, profile, user, onSuccess }) {
             {/* Sub-view: Upload Photo */}
             {mode === 'file' && (
               <div style={{ textAlign: 'center', padding: '24px 16px', border: '2px dashed #047857', borderRadius: '12px', background: '#f8fafc' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>📁</div>
+                <div style={{ marginBottom: '8px' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '3rem', color: '#047857' }}>cloud_upload</span>
+                </div>
                 <div style={{ fontWeight: 800, color: '#111827', fontSize: '0.95rem' }}>Upload Photo of Daily QR Code</div>
                 <p style={{ fontSize: '0.82rem', color: '#6b7280', margin: '4px 0 16px' }}>
                   Select an image or take a photo of the daily QR code from your gallery or files.

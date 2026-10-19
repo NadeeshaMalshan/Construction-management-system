@@ -1277,7 +1277,7 @@ export default function ClientDashboard() {
                 boxShadow: '0 4px 14px rgba(22, 163, 74, 0.12)'
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-                  <span style={{ fontSize: '2rem' }}>🎉</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: '2rem', color: '#15803d' }}>celebration</span>
                   <div>
                     <strong style={{ color: '#15803d', fontSize: '1.1rem', display: 'block' }}>
                       Project Request Approved by Project Manager!
@@ -1291,13 +1291,13 @@ export default function ClientDashboard() {
                   <button
                     type="button"
                     className="btn-solid-green"
-                    style={{ padding: '0.7rem 1.4rem', fontWeight: 700, fontSize: '0.92rem' }}
+                    style={{ padding: '0.7rem 1.4rem', fontWeight: 700, fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '6px' }}
                     onClick={() => {
                       const firstApproved = projectRequests.find(r => r.status === 'APPROVED' && !r.downPaymentPaid && !r.startedProjectId);
                       if (firstApproved) handleProceedToPaymentFromRequest(firstApproved, true);
                     }}
                   >
-                    💳 Pay Down Payment Now →
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>payments</span> Pay Down Payment Now →
                   </button>
                   <button
                     type="button"
@@ -1534,8 +1534,9 @@ export default function ClientDashboard() {
                       setInquiryMessage(`Hello, I would like to inquire about details for ${selectedDesign.name} (${selectedDesign.category}). Could you please share the breakdown of costs, blueprint options, and project timeline?`);
                       setActiveTab('inquiries');
                     }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
                   >
-                    💬 Ask Details from Project Manager
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>chat</span> Ask Details from Project Manager
                   </button>
                   <button
                     type="button"
@@ -2100,7 +2101,7 @@ export default function ClientDashboard() {
 
                                 {req.downPaymentPaid ? (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: '#dcfce7', border: '1.5px solid #86efac', padding: '0.65rem 1.25rem', borderRadius: '8px' }}>
-                                    <span style={{ fontSize: '1.3rem' }}>💰</span>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '1.4rem', color: '#15803d' }}>payments</span>
                                     <div>
                                       <strong style={{ color: '#14532d', fontSize: '0.95rem', display: 'block' }}>
                                         Initial 20% Down Payment Paid: {formatMoney(req.downPaymentAmount)}
@@ -2127,7 +2128,7 @@ export default function ClientDashboard() {
                                       }}
                                       onClick={() => handleProceedToPaymentFromRequest(req, true)}
                                     >
-                                      💳 Pay with Card (Instant) →
+                                      <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>credit_card</span> Pay with Card (Instant) →
                                     </button>
                                     <button
                                       type="button"
@@ -2137,11 +2138,14 @@ export default function ClientDashboard() {
                                         fontSize: '0.96rem',
                                         fontWeight: 700,
                                         borderRadius: '8px',
-                                        background: '#fff'
+                                        background: '#fff',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px'
                                       }}
                                       onClick={() => handleProceedToPaymentFromRequest(req, false)}
                                     >
-                                      🏦 Bank Transfer →
+                                      <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>account_balance</span> Bank Transfer →
                                     </button>
                                   </div>
                                 )}
@@ -2351,10 +2355,13 @@ export default function ClientDashboard() {
                       color: inquiryType === 'CATALOG' ? '#047857' : '#4b5563',
                       fontWeight: 700,
                       fontSize: '0.82rem',
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
                     }}
                   >
-                    🏛️ Catalog Design Inquiry
+                    <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>architecture</span> Catalog Design Inquiry
                   </button>
                   <button
                     type="button"
@@ -2367,10 +2374,13 @@ export default function ClientDashboard() {
                       color: inquiryType === 'GENERAL' ? '#047857' : '#4b5563',
                       fontWeight: 700,
                       fontSize: '0.82rem',
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
                     }}
                   >
-                    💬 General Inquiry
+                    <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>chat</span> General Inquiry
                   </button>
                 </div>
 
@@ -2691,10 +2701,10 @@ export default function ClientDashboard() {
                               <button
                                 type="button"
                                 className="btn-solid-green"
-                                style={{ background: '#2563eb', borderColor: '#1d4ed8', fontSize: '0.82rem', padding: '0.45rem 1.1rem' }}
+                                style={{ background: '#2563eb', borderColor: '#1d4ed8', fontSize: '0.82rem', padding: '0.45rem 1.1rem', display: 'flex', alignItems: 'center', gap: '4px' }}
                                 onClick={() => handleProceedToPaymentFromInquiry(inq)}
                               >
-                                💳 Pay 20% Down Payment ({formatMoney(requiredDownPayment)}) →
+                                <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>payments</span> Pay 20% Down Payment ({formatMoney(requiredDownPayment)}) →
                               </button>
                             </div>
                           );
@@ -2730,10 +2740,10 @@ export default function ClientDashboard() {
                               <button
                                 type="button"
                                 className="btn-solid-green"
-                                style={{ fontSize: '0.82rem', padding: '0.45rem 1.15rem' }}
+                                style={{ fontSize: '0.82rem', padding: '0.45rem 1.15rem', display: 'flex', alignItems: 'center', gap: '4px' }}
                                 onClick={() => handleProceedToPaymentFromInquiry(inq, true)}
                               >
-                                💳 Pay 20% Down Payment ({formatMoney(requiredDownPayment)}) →
+                                <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>payments</span> Pay 20% Down Payment ({formatMoney(requiredDownPayment)}) →
                               </button>
                             </div>
                           );
@@ -2755,8 +2765,8 @@ export default function ClientDashboard() {
                             }}>
                               <div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <span style={{ background: '#ca8a04', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
-                                    📋 PROJECT QUOTATION ESTIMATE
+                                  <span style={{ background: '#ca8a04', color: '#fff', fontSize: '0.75rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '0.9rem' }}>description</span> PROJECT QUOTATION ESTIMATE
                                   </span>
                                   <span style={{ fontSize: '0.84rem', color: '#854d0e', fontWeight: 700 }}>
                                     Awaiting Final PM Approval

@@ -1712,7 +1712,7 @@ export default function EmployeeManagerDashboard() {
                       gap: '6px',
                     }}
                   >
-                    <span>📷</span> Daily Attendance QR
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.15rem' }}>qr_code_2</span> Daily Attendance QR
                     {todayQr?.hasActiveQr ? (
                       <span style={{
                         background: '#10b981',
@@ -2002,9 +2002,8 @@ export default function EmployeeManagerDashboard() {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        fontSize: '1.25rem'
                       }}>
-                        📅
+                        <span className="material-symbols-outlined" style={{ fontSize: '1.35rem' }}>calendar_month</span>
                       </div>
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2046,9 +2045,8 @@ export default function EmployeeManagerDashboard() {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        fontSize: '1.25rem'
                       }}>
-                        📷
+                        <span className="material-symbols-outlined" style={{ fontSize: '1.35rem' }}>qr_code_scanner</span>
                       </div>
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2645,7 +2643,7 @@ export default function EmployeeManagerDashboard() {
                         gap: '8px',
                       }}
                     >
-                      <span>🔄</span>
+                      <span className="material-symbols-outlined" style={{ fontSize: '1.2rem' }}>sync</span>
                       {loadingQr
                         ? 'Processing...'
                         : todayQr?.hasActiveQr
@@ -2671,7 +2669,7 @@ export default function EmployeeManagerDashboard() {
                           gap: '6px',
                         }}
                       >
-                        <span>🖨️</span> Print Poster (A4)
+                        <span className="material-symbols-outlined" style={{ fontSize: '1.2rem' }}>print</span> Print Poster (A4)
                       </button>
                     )}
                   </div>
@@ -2768,7 +2766,9 @@ export default function EmployeeManagerDashboard() {
                         />
                       ) : (
                         <div style={{ color: '#9ca3af', padding: '20px', textAlign: 'center' }}>
-                          <div style={{ fontSize: '3rem', marginBottom: '8px' }}>📷</div>
+                          <div style={{ marginBottom: '8px' }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: '3rem', color: '#9ca3af' }}>qr_code_2</span>
+                          </div>
                           <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#374151' }}>
                             {todayQr?.status === 'EXPIRED' ? 'QR Code Expired' : 'No Active QR Code'}
                           </div>
@@ -2840,9 +2840,13 @@ export default function EmployeeManagerDashboard() {
                               fontWeight: 700,
                               fontSize: '0.82rem',
                               cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
                             }}
                           >
-                            📋 Copy Token
+                            <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>content_copy</span> Copy Token
                           </button>
                           <button
                             type="button"
@@ -2857,9 +2861,13 @@ export default function EmployeeManagerDashboard() {
                               fontWeight: 700,
                               fontSize: '0.82rem',
                               cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
                             }}
                           >
-                            🖨️ Print Poster
+                            <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>print</span> Print Poster
                           </button>
                         </div>
                       </div>
@@ -3956,8 +3964,8 @@ export default function EmployeeManagerDashboard() {
                   Scan with your Employee Portal to record Check-In &amp; Check-Out.
                 </div>
 
-                <div style={{ fontSize: '0.75rem', color: '#991b1b', fontWeight: 700 }}>
-                  ⚠️ Strictly valid today until 11:59:59 PM only.
+                <div style={{ fontSize: '0.75rem', color: '#991b1b', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>warning</span> Strictly valid today until 11:59:59 PM only.
                 </div>
               </div>
 
@@ -3980,7 +3988,7 @@ export default function EmployeeManagerDashboard() {
                     gap: '6px',
                   }}
                 >
-                  <span>🖨️</span> Print Poster Now
+                  <span className="material-symbols-outlined" style={{ fontSize: '1.2rem' }}>print</span> Print Poster Now
                 </button>
                 <button
                   type="button"

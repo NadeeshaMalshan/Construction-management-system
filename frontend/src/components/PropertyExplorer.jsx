@@ -133,7 +133,7 @@ export default function PropertyExplorer({
                           className="btn-outline-green"
                           onClick={() => onInquire(item)}
                         >
-                          💬 Ask Details
+                          <span className="material-symbols-outlined" style={{ fontSize: '1rem', verticalAlign: 'middle', marginRight: '4px' }}>chat</span> Ask Details
                         </button>
                       )}
                       {onSelectProject && (

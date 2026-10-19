@@ -1155,8 +1155,12 @@ export default function ProjectManagerDashboard() {
                 >
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ background: '#16a34a', color: '#fff', fontSize: '0.74rem', fontWeight: 800, padding: '3px 8px', borderRadius: '4px', letterSpacing: '0.5px' }}>
-                        {item.downPaymentPaid ? '💰 20% DOWN PAYMENT COMPLETED' : 'CONTRACT SIGNED BY CLIENT MANAGER'}
+                      <span style={{ background: '#16a34a', color: '#fff', fontSize: '0.74rem', fontWeight: 800, padding: '3px 8px', borderRadius: '4px', letterSpacing: '0.5px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        {item.downPaymentPaid ? (
+                          <>
+                            <span className="material-symbols-outlined" style={{ fontSize: '0.9rem' }}>payments</span> 20% DOWN PAYMENT COMPLETED
+                          </>
+                        ) : 'CONTRACT SIGNED BY CLIENT MANAGER'}
                       </span>
                       <strong style={{ color: '#14532d', fontSize: '1.02rem' }}>
                         Ready for Project Initialization: "{item.subject}"
@@ -1184,7 +1188,7 @@ export default function ProjectManagerDashboard() {
                       gap: '6px',
                     }}
                   >
-                    🏗️ Create Project
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>domain_add</span> Create Project
                   </button>
                 </div>
               );
@@ -1352,7 +1356,7 @@ export default function ProjectManagerDashboard() {
                   boxShadow: (tab === 'inquiries' || (tab === 'client-inquiries-requests' && clientReqSubTab === 'inquiries')) ? '0 2px 6px rgba(15,76,58,0.25)' : 'none',
                 }}
               >
-                <span>💬</span> Client Inquiries {inquiries.length > 0 ? `(${inquiries.filter((i) => i.status === 'PENDING').length > 0 ? `${inquiries.length} · ${inquiries.filter((i) => i.status === 'PENDING').length} Unread` : inquiries.length})` : ''}
+                <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>chat</span> Client Inquiries {inquiries.length > 0 ? `(${inquiries.filter((i) => i.status === 'PENDING').length > 0 ? `${inquiries.length} · ${inquiries.filter((i) => i.status === 'PENDING').length} Unread` : inquiries.length})` : ''}
               </button>
 
               <button
@@ -1374,7 +1378,7 @@ export default function ProjectManagerDashboard() {
                   boxShadow: (tab === 'custom-designs' || (tab === 'client-inquiries-requests' && clientReqSubTab === 'custom-designs')) ? '0 2px 6px rgba(15,76,58,0.25)' : 'none',
                 }}
               >
-                <span>🎨</span> Client Own Designs {customPendingCount > 0 ? `(${customRequests.length} · ${customPendingCount} New)` : (customRequests.length > 0 ? `(${customRequests.length})` : '')}
+                <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>draw</span> Client Own Designs {customPendingCount > 0 ? `(${customRequests.length} · ${customPendingCount} New)` : (customRequests.length > 0 ? `(${customRequests.length})` : '')}
               </button>
 
               <button
@@ -1396,7 +1400,7 @@ export default function ProjectManagerDashboard() {
                   boxShadow: (tab === 'requests' || (tab === 'client-inquiries-requests' && clientReqSubTab === 'requests')) ? '0 2px 6px rgba(15,76,58,0.25)' : 'none',
                 }}
               >
-                <span>📋</span> Company Catalog Requests {catalogPendingCount > 0 ? `(${catalogRequests.length} · ${catalogPendingCount} New)` : (catalogRequests.length > 0 ? `(${catalogRequests.length})` : '')}
+                <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>domain</span> Company Catalog Requests {catalogPendingCount > 0 ? `(${catalogRequests.length} · ${catalogPendingCount} New)` : (catalogRequests.length > 0 ? `(${catalogRequests.length})` : '')}
               </button>
             </div>
           </div>
@@ -1698,8 +1702,8 @@ export default function ProjectManagerDashboard() {
                                   </span>
                                 )}
                                 {inq.downPaymentPaid && (
-                                  <span style={{ padding: '2px 9px', borderRadius: '12px', fontSize: '0.74rem', fontWeight: 800, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }}>
-                                    💰 Down Payment Paid ({formatMoney(inq.downPaymentAmount)})
+                                  <span style={{ padding: '2px 9px', borderRadius: '12px', fontSize: '0.74rem', fontWeight: 800, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '0.9rem' }}>payments</span> Down Payment Paid ({formatMoney(inq.downPaymentAmount)})
                                   </span>
                                 )}
                                 {inq.clientAccepted && !inq.downPaymentPaid && (
@@ -1835,7 +1839,7 @@ export default function ProjectManagerDashboard() {
                                     boxShadow: '0 2px 6px rgba(22,163,74,0.3)',
                                   }}
                                 >
-                                  🏗️ Initialize Project {inq.downPaymentPaid ? '(Payment Verified)' : ''}
+                                  <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>domain_add</span> Initialize Project {inq.downPaymentPaid ? '(Payment Verified)' : ''}
                                 </button>
                               )}
 
@@ -1983,7 +1987,7 @@ export default function ProjectManagerDashboard() {
                                   boxShadow: '0 2px 6px rgba(22,163,74,0.3)',
                                 }}
                               >
-                                🏗️ Initialize Project Now →
+                                <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>domain_add</span> Initialize Project Now →
                               </button>
                             )}
                           </div>
@@ -2491,8 +2495,8 @@ export default function ProjectManagerDashboard() {
                                   <span>✓</span> Approved by Project Manager ({req.approvedBy || 'Project Manager'} on {formatDate(req.approvedAt)})
                                 </strong>
                                 {req.downPaymentPaid ? (
-                                  <span style={{ fontSize: '0.82rem', color: '#14532d', fontWeight: 800, background: '#86efac', padding: '3px 10px', borderRadius: '4px' }}>
-                                    💰 20% Down Payment Paid: {formatMoney(req.downPaymentAmount)} (Ref #{req.downPaymentRef || 'N/A'})
+                                  <span style={{ fontSize: '0.82rem', color: '#14532d', fontWeight: 800, background: '#86efac', padding: '3px 10px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '0.9rem' }}>payments</span> 20% Down Payment Paid: {formatMoney(req.downPaymentAmount)} (Ref #{req.downPaymentRef || 'N/A'})
                                   </span>
                                 ) : (
                                   <span style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 700, background: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>
@@ -2580,10 +2584,10 @@ export default function ProjectManagerDashboard() {
                               <button
                                 type="button"
                                 className="pm-btn primary"
-                                style={{ padding: '0.65rem 1.4rem', fontSize: '0.9rem', background: '#16a34a', borderColor: '#16a34a', fontWeight: 700, borderRadius: '8px', boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}
+                                style={{ padding: '0.65rem 1.4rem', fontSize: '0.9rem', background: '#16a34a', borderColor: '#16a34a', fontWeight: 700, borderRadius: '8px', boxShadow: '0 2px 6px rgba(22,163,74,0.25)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                                 onClick={() => handleOpenStartProjectModal(req)}
                               >
-                                🏗️ Initialize Construction Project {req.downPaymentPaid ? '(Payment Verified)' : ''}
+                                <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>domain_add</span> Initialize Construction Project {req.downPaymentPaid ? '(Payment Verified)' : ''}
                               </button>
                             </>
                           )}
@@ -2644,7 +2648,9 @@ export default function ProjectManagerDashboard() {
 
             {catalogRequests.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '3.5rem 1rem', background: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1', color: '#64748b', marginTop: '1.25rem' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📋</div>
+                <div style={{ marginBottom: '0.5rem' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '3rem', color: '#94a3b8' }}>domain</span>
+                </div>
                 <h3 style={{ margin: '0 0 0.5rem', color: '#1e293b', fontSize: '1.15rem' }}>No Catalog Project Requests</h3>
                 <p style={{ margin: 0, fontSize: '0.88rem' }}>When clients request a project based on company catalog designs, they will appear here for engineering assessment.</p>
               </div>
@@ -2881,8 +2887,8 @@ export default function ProjectManagerDashboard() {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', flexWrap: 'wrap', gap: '6px' }}>
                               <strong style={{ color: '#15803d', fontSize: '0.88rem' }}>✓ Approved ({req.approvedBy || 'Project Manager'} on {formatDate(req.approvedAt)})</strong>
                               {req.downPaymentPaid ? (
-                                <span style={{ fontSize: '0.8rem', color: '#14532d', fontWeight: 800, background: '#86efac', padding: '2px 8px', borderRadius: '4px' }}>
-                                  💰 Down Payment Paid: {formatMoney(req.downPaymentAmount)} (Ref #{req.downPaymentRef || 'N/A'})
+                                <span style={{ fontSize: '0.8rem', color: '#14532d', fontWeight: 800, background: '#86efac', padding: '2px 8px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: '0.9rem' }}>payments</span> Down Payment Paid: {formatMoney(req.downPaymentAmount)} (Ref #{req.downPaymentRef || 'N/A'})
                                 </span>
                               ) : (
                                 <span style={{ fontSize: '0.78rem', color: '#166534', fontWeight: 700, background: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>
@@ -2920,10 +2926,10 @@ export default function ProjectManagerDashboard() {
                             <button
                               type="button"
                               className="pm-btn secondary"
-                              style={{ padding: '0.6rem 1.25rem', fontSize: '0.88rem', borderRadius: '8px', fontWeight: 600 }}
+                              style={{ padding: '0.6rem 1.25rem', fontSize: '0.88rem', borderRadius: '8px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                               onClick={() => handleOpenPmReplyModal(req)}
                             >
-                              {req.pmReply ? '✏️ Update Engineering Assessment' : '📐 Feasibility Assessment'}
+                              <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>{req.pmReply ? 'edit_note' : 'architecture'}</span> {req.pmReply ? 'Update Engineering Assessment' : 'Feasibility Assessment'}
                             </button>
                             <button
                               type="button"
@@ -2941,18 +2947,18 @@ export default function ProjectManagerDashboard() {
                             <button
                               type="button"
                               className="pm-btn secondary"
-                              style={{ padding: '0.6rem 1.25rem', fontSize: '0.88rem', borderRadius: '8px', fontWeight: 600, background: '#eff6ff', color: '#1d4ed8', borderColor: '#bfdbfe' }}
+                              style={{ padding: '0.6rem 1.25rem', fontSize: '0.88rem', borderRadius: '8px', fontWeight: 600, background: '#eff6ff', color: '#1d4ed8', borderColor: '#bfdbfe', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                               onClick={() => handleOpenPmDownPaymentMsgModal(req)}
                             >
-                              ✉️ Send / Update Down Payment Message
+                              <span className="material-symbols-outlined" style={{ fontSize: '1rem' }}>mail</span> Send / Update Down Payment Message
                             </button>
                             <button
                               type="button"
                               className="pm-btn primary"
-                              style={{ padding: '0.65rem 1.4rem', fontSize: '0.9rem', background: '#16a34a', borderColor: '#16a34a', fontWeight: 700, borderRadius: '8px', boxShadow: '0 2px 6px rgba(22,163,74,0.25)' }}
+                              style={{ padding: '0.65rem 1.4rem', fontSize: '0.9rem', background: '#16a34a', borderColor: '#16a34a', fontWeight: 700, borderRadius: '8px', boxShadow: '0 2px 6px rgba(22,163,74,0.25)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                               onClick={() => handleOpenStartProjectModal(req)}
                             >
-                              🏗️ Initialize Construction Project {req.downPaymentPaid ? '(Payment Verified)' : ''}
+                              <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>domain_add</span> Initialize Construction Project {req.downPaymentPaid ? '(Payment Verified)' : ''}
                             </button>
                           </>
                         )}

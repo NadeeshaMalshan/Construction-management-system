@@ -1274,9 +1274,9 @@ export default function InventoryManagerDashboard() {
                   </button>
                   <button
                     onClick={() => setTab('reports')}
-                    style={{ padding: '12px 16px', background: '#0f766e', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}
+                    style={{ padding: '12px 16px', background: '#0f766e', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '6px' }}
                   >
-                    📊 View Reports &amp; Analytics
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>analytics</span> View Reports &amp; Analytics
                   </button>
                 </div>
               </div>
@@ -2758,7 +2758,7 @@ export default function InventoryManagerDashboard() {
                       boxShadow: '0 2px 4px rgba(217, 119, 6, 0.2)',
                     }}
                   >
-                    <span>📑</span> Download Full Executive Dossier (PDF)
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>description</span> Download Full Executive Dossier (PDF)
                   </button>
                 </div>
               </div>
@@ -2881,15 +2881,21 @@ export default function InventoryManagerDashboard() {
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#ecfdf5', borderRadius: '6px', fontSize: '0.82rem' }}>
-                      <span style={{ color: '#065f46', fontWeight: 600 }}>🟢 Healthy In-Stock</span>
+                      <span style={{ color: '#065f46', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '1rem', color: '#10b981' }}>check_circle</span> Healthy In-Stock
+                      </span>
                       <strong style={{ color: '#065f46' }}>{healthyStockCount} items ({materials.length > 0 ? Math.round((healthyStockCount / materials.length) * 100) : 0}%)</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#fffbeb', borderRadius: '6px', fontSize: '0.82rem' }}>
-                      <span style={{ color: '#92400e', fontWeight: 600 }}>🟡 Low Stock Warning</span>
+                      <span style={{ color: '#92400e', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '1rem', color: '#f59e0b' }}>warning</span> Low Stock Warning
+                      </span>
                       <strong style={{ color: '#92400e' }}>{lowStockMaterialsCount} items ({materials.length > 0 ? Math.round((lowStockMaterialsCount / materials.length) * 100) : 0}%)</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#fef2f2', borderRadius: '6px', fontSize: '0.82rem' }}>
-                      <span style={{ color: '#991b1b', fontWeight: 600 }}>🔴 Depleted / Out of Stock</span>
+                      <span style={{ color: '#991b1b', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '1rem', color: '#ef4444' }}>cancel</span> Depleted / Out of Stock
+                      </span>
                       <strong style={{ color: '#991b1b' }}>{outOfStockMaterialsCount} items ({materials.length > 0 ? Math.round((outOfStockMaterialsCount / materials.length) * 100) : 0}%)</strong>
                     </div>
                   </div>
@@ -3073,7 +3079,7 @@ export default function InventoryManagerDashboard() {
                       boxShadow: '0 2px 4px rgba(4, 120, 87, 0.25)',
                     }}
                   >
-                    <span>📥</span> Download Report (PDF)
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>download</span> Download Report (PDF)
                   </button>
                   <button
                     type="button"
@@ -3093,7 +3099,7 @@ export default function InventoryManagerDashboard() {
                       boxShadow: '0 2px 4px rgba(217, 119, 6, 0.2)',
                     }}
                   >
-                    <span>📑</span> Master Audit Dossier (PDF)
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>description</span> Master Audit Dossier (PDF)
                   </button>
                   <button
                     type="button"
@@ -3112,7 +3118,7 @@ export default function InventoryManagerDashboard() {
                       gap: '6px',
                     }}
                   >
-                    <span>📊</span> Export Excel
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>table_view</span> Export Excel
                   </button>
                   <button
                     type="button"
@@ -3131,7 +3137,7 @@ export default function InventoryManagerDashboard() {
                       gap: '6px',
                     }}
                   >
-                    <span>📁</span> Export CSV
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>csv</span> Export CSV
                   </button>
                   <button
                     type="button"
@@ -3150,7 +3156,7 @@ export default function InventoryManagerDashboard() {
                       gap: '6px',
                     }}
                   >
-                    <span>🖨️</span> Print
+                    <span className="material-symbols-outlined" style={{ fontSize: '1.1rem' }}>print</span> Print
                   </button>
                 </div>
               </div>
